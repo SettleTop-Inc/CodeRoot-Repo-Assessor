@@ -78,8 +78,12 @@ async def test_every_tool_has_a_description():
 @pytest.mark.anyio
 async def test_assess_tool_returns_the_same_record_as_the_http_surface():
     from assessor.handlers import assess_handler
+    # commit_sha deliberately differs from the "abc123" _Source.snapshot()
+    # above always returns for commit_sha, so this fixture can't be misread
+    # as evidence that a caller-supplied commit_sha is honored (it is not —
+    # see test_app_http.py's commit_sha guard tests).
     subject = {"repo_url": "https://github.com/o/n", "subject_key": "rid-1",
-               "commit_sha": "abc123", "subdir": ""}
+               "commit_sha": "caller-requested-and-ignored", "subdir": ""}
     direct = assess_handler(_Source(), NullCache(),
                             Settings(assessor_api_token="x"), subject)
     result = await _mcp().call_tool("assess_repository",

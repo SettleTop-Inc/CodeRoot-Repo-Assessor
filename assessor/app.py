@@ -112,6 +112,21 @@ def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
 
     @app.post("/v1/assess", dependencies=[Depends(auth)])
     def assess(body: AssessIn):
+        # commit_sha pinning is not implemented: ports/source.py's snapshot()
+        # always calls self.acquire(subject["repo_url"], prior=None), and
+        # acquire() always resolves current HEAD via resolve_head — there is
+        # no code path that pins a caller-supplied sha. Silently ignoring a
+        # caller's `commit_sha` would derive a confidently-labelled assessment
+        # of a DIFFERENT commit than the one they asked for, so refuse
+        # explicitly rather than quietly substituting HEAD, matching the `ref`
+        # and `source` guards below. The field stays on the model so the
+        # request contract shape is stable for when pinning is implemented;
+        # an empty string (what every current caller sends) stays valid.
+        if body.subject.commit_sha:
+            return JSONResponse(status_code=400,
+                                content={"error": "unsupported_field", "field": "commit_sha",
+                                         "reason": "commit_sha pinning is not supported "
+                                                   "by this deployment"})
         # McpSource does not exist yet (a later, separate plan). Silently
         # falling back to DirectSource for `source: "mcp"` would perform a
         # live GitHub acquisition instead of the zero-cost re-derivation the

@@ -45,8 +45,13 @@ def _client(settings=None, source=None):
     return TestClient(build_app(s, source or _Source(), NullCache()))
 
 
+# commit_sha is "" here, not a pinned value: /v1/assess rejects any non-empty
+# commit_sha as unsupported_field (see the guard test below), and "" is what
+# every current caller sends. Previously this hardcoded "abc123" — the same
+# literal value _Source.snapshot() below always returns for commit_sha —
+# which made honored-versus-ignored indistinguishable from the fixture alone.
 _BODY = {"subject": {"repo_url": "https://github.com/o/n", "subject_key": "rid-1",
-                     "commit_sha": "abc123", "subdir": ""},
+                     "commit_sha": "", "subdir": ""},
          "source": "direct"}
 
 
@@ -144,6 +149,26 @@ def test_assess_rejects_a_non_direct_source_as_unsupported():
     assert r.status_code == 400
     body = r.json()
     assert body["error"] == "unsupported_field" and body["field"] == "source"
+
+
+def test_assess_rejects_a_non_empty_commit_sha_as_unsupported():
+    """A caller pinning a commit gets a confidently-labelled assessment of a
+    DIFFERENT commit unless this is refused: DirectSource.snapshot() always
+    re-resolves HEAD (ports/source.py), so a non-empty commit_sha can never
+    actually be honored. Mirrors the `ref`/`source` guards above exactly:
+    same body shape, same reason style."""
+    body = {**_BODY, "subject": {**_BODY["subject"], "commit_sha": "deadbeef"}}
+    r = _client().post("/v1/assess", json=body, headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 400
+    resp = r.json()
+    assert resp["error"] == "unsupported_field" and resp["field"] == "commit_sha"
+
+
+def test_assess_accepts_an_empty_commit_sha():
+    """The other half of the guard: an empty commit_sha (what every current
+    caller sends, since pinning is not yet implemented) must keep working."""
+    r = _client().post("/v1/assess", json=_BODY, headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 200
 
 
 def test_openapi_and_docs_are_not_served():

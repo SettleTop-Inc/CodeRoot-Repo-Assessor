@@ -6,8 +6,16 @@ from assessor.handlers import assess_handler
 from assessor.ports.cache import NullCache
 
 _S = Settings(assessor_api_token="x")
+# commit_sha is deliberately NOT "abc123" — the value _Source.snapshot() below
+# always returns for commit_sha — so a reader can tell at a glance that this
+# is the caller's (unused) requested value, not something the double honors.
+# assess_handler passes `subject` straight through to source.snapshot(subject)
+# unexamined; DirectSource.snapshot() ignores subject["commit_sha"] entirely
+# (see ports/source.py and test_ports_source.py's
+# test_snapshot_returns_the_acquired_snapshot), so this field has zero effect
+# on any assertion in this file.
 _SUBJECT = {"repo_url": "https://github.com/o/n", "subject_key": "rid-1",
-            "commit_sha": "abc123", "subdir": ""}
+            "commit_sha": "caller-requested-and-ignored", "subdir": ""}
 
 
 class _Source:
