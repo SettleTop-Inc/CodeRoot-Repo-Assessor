@@ -1,64 +1,101 @@
 #!/usr/bin/env python
-"""Task 10 acceptance gate: prove that assessing a CodeRoot-acquired repository
-through `source: "mcp"` produces a record byte-identical to `source: "direct"`,
-with zero GitHub requests on the MCP path.
+"""Acceptance gate for the CodeRoot-MCP data plane: prove that assessing a
+repository through `source: "mcp"` reproduces the record CodeRoot itself
+recorded for that repository, making ZERO GitHub requests.
 
-This is the whole justification for the CodeRoot-MCP data plane sub-project: a
-registry bump must be able to re-derive the corpus for free, reading from what
-CodeRoot already persisted instead of re-hitting GitHub.
+This is the whole justification for the data-plane sub-project: a registry bump
+must be able to re-derive the corpus for free, reading from what CodeRoot
+already persisted instead of re-hitting GitHub.
 
-WHAT THIS SCRIPT DOES
-----------------------
-For each of `--count` repositories CodeRoot has already acquired (queried live
-from `coderoot.repo_acquisition` joined to `coderoot.repositories`, via
-`docker exec coderoot-oss-postgres-1 psql`):
+WHY THIS COMPARES AGAINST CODEROOT, NOT AGAINST `source: "direct"`
+------------------------------------------------------------------
+The first version of this script compared the mcp path against the direct path
+and required the two records to be byte-identical. That criterion was ill-posed
+and could never have passed, for a reason that is by design rather than a bug:
 
-  1. Confirms the repo's GitHub HEAD has not moved since CodeRoot acquired it
-     (a live 2-call GitHub check). If it has, the repo is skipped -- comparing
-     a fresh HEAD fetch against a day-old persisted snapshot would produce a
-     content difference that has nothing to do with the source transport, and
-     would misattribute ordinary upstream churn to a McpSource/DirectSource
-     bug. This is NOT in the task brief; it was discovered while building this
-     script (13 of the 130 acquired repos had already drifted) and is exactly
-     the kind of confound the brief warns the harness must isolate.
-  2. Assesses it via `source: "mcp"` (McpSource -> McpToolClient -> a REAL
-     Streamable-HTTP CodeRoot-MCP server -> CodeRoot's API) and via
-     `source: "direct"` (DirectSource -> live GitHub, using a real token).
-  3. Compares the FULL returned record (not just content_fingerprint/
-     asset_types) and reports every differing field, if any.
+    `DirectSource.metrics()` returns None -- a standalone deployment has no
+    Aveloxis, so it has no licence/release metrics to report. `McpSource.metrics()`
+    returns CodeRoot's real collected metrics.
 
-The LLM is off on both paths (`llm_provider=none`), so the deterministic core
-is what's measured -- an LLM-derived promotion is non-deterministic and would
-fail the comparison for reasons unrelated to the transport.
+So `assessment.versions` legitimately differs on every repo that has release
+history, and `content_fingerprint` itself diverges whenever `license_spdx` is
+null on one side. The 12/15 result that first run produced was not 3 failures;
+it was 3 repos where the two sources genuinely had different inputs. Forcing
+agreement would have meant degrading one path to match the other.
 
-GitHub requests on the MCP-path are measured by monkeypatching `httpx.Client.send`
-(the sync client `assessor/http_client.py::HttpClient` uses for every GitHub REST
-call) for the duration of that phase and recording every outbound host -- NOT by
-polling `GET https://api.github.com/rate_limit`. That endpoint was tried first and
-rejected: a direct A/B check (5 back-to-back real GitHub calls) showed the
-per-response `x-ratelimit-remaining` HEADER decrementing normally (4639 -> 4635)
-while `/rate_limit`'s OWN response body stayed frozen at "5000/5000" throughout --
-confirming it lags/caches independently of real usage on this token, in this
-environment (matching a previously-documented gotcha with this same endpoint).
-Trusting it would have made a false "zero requests" claim unfalsifiable. The
-transport-level counter is corroborated structurally too: the MCP-path Settings
-carries no GitHub token at all, so McpSource has no way to make an authenticated
-GitHub call even by accident, and it is exercised as a sanity check on the direct
-path (which must show real api.github.com traffic, or the counter itself would be
-suspect). Note this instrumentation only sees httpx traffic -- DirectSource's git
-clone is a separate `git` subprocess speaking the git protocol directly, not an
-HTTP call this counter observes; see the printed caveat below.
+The comparison that carries meaning is the one sub-project 1 already
+established and passed on all 130 repos (`tests/test_parity.py`): does this
+service reproduce CODEROOT'S OWN recorded output? Sub-project 1 answered that
+for a snapshot handed to the handler directly. This script answers it for a
+snapshot delivered over the real MCP transport -- which is precisely the new
+thing the data plane adds, and the only thing this sub-project needs to prove.
+
+Two further properties fall out of the reframing, both of them wanted:
+
+  * The stored record is a FIXED ground truth, so upstream HEAD drift is no
+    longer a confound. The previous script had to make live GitHub calls to
+    detect and skip drifted repos (13 of 130 had drifted); the MCP path reads
+    the persisted snapshot at the persisted SHA, and the stored record was
+    computed from that same snapshot, so both sides are pinned to the same
+    commit no matter what upstream did afterwards.
+  * The gate needs NO GITHUB CREDENTIAL. Not as a convenience -- it is the
+    claim under test. A run that cannot authenticate to GitHub and still
+    reproduces the corpus is direct evidence of free re-derivation.
+
+WHAT IS COMPARED
+----------------
+Exactly the rule `tests/test_parity.py::_check_record` applies, against the
+same columns:
+
+  * `content_fingerprint` -- compared UNCONDITIONALLY. `assemble.build`
+    computes it from the deterministic classification only, before any
+    citation-backed promotion, so a promotion can never move it. Any mismatch
+    is a real divergence.
+  * `asset_types` -- compared against `stored asset_types MINUS
+    stored promoted_types`. This runs with `llm_provider=none` and cannot
+    reproduce an LLM promotion, so the deterministic portion is what it can
+    legitimately be held to. Repos with a promotion say so in their output
+    line rather than silently dropping the type.
+
+PROVING ZERO GITHUB REQUESTS
+----------------------------
+`watch_outbound_hosts` records every outbound request across BOTH installed
+httpx libraries -- `httpx` (0.28.x, what the assessor uses for GitHub) and
+`httpx2` (2.9.x, MCP SDK 2.0's own fork, which is what the MCP transport
+actually uses) -- and both their sync and async clients. See that function for
+why one library is not enough; in short, instrumenting only `httpx` both hides
+all MCP traffic (destroying the positive control) and leaves a GitHub request
+issued via `httpx2` uncounted.
+
+The run asserts BOTH directions, because either alone is worthless:
+
+  * total observed calls > 0 -- the instrument is live. Without this, "zero
+    GitHub hosts observed" is indistinguishable from "the recorder never ran",
+    and a silently broken recorder reports a perfect result. This fired on the
+    first run of the reframed script and caught exactly that.
+  * GitHub calls == 0 -- the actual claim.
+
+All patches are pass-through wrappers; none alters request behaviour.
+
+`GET https://api.github.com/rate_limit` is deliberately NOT used to measure
+this. It was tried first and rejected: a direct A/B check showed the per-response
+`x-ratelimit-remaining` header decrementing normally (4639 -> 4635) while
+`/rate_limit`'s own body stayed frozen at "5000/5000" throughout, confirming it
+lags real usage in this environment. Trusting it would have made a false
+zero-request claim unfalsifiable.
+
+The zero-request claim is corroborated structurally as well: the mcp-path
+`Settings` carries no GitHub token at all, which the script asserts before
+starting, so `McpSource` has no means to make an authenticated GitHub call even
+by accident.
 
 USAGE
 -----
     .venv/Scripts/python.exe scripts/verify_mcp_parity.py \\
-        --mcp-url http://127.0.0.1:8300/mcp \\
-        --github-token-file <path-to-a-file-containing-one-token> \\
-        --count 5
+        --mcp-url http://127.0.0.1:8300/mcp
 
 CodeRoot-MCP must already be running (streamable-http transport) pointed at a
-live CodeRoot API; this script does not start it. See the Task 10 report for
-the exact commands used to bring it up.
+live CodeRoot API; this script does not start it.
 """
 from __future__ import annotations
 
@@ -67,12 +104,14 @@ import contextlib
 import json
 import subprocess
 import sys
-import tempfile
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import httpx
+
+try:  # MCP SDK 2.0 ships its own fork; see watch_outbound_hosts.
+    import httpx2
+except ImportError:  # pragma: no cover - httpx2 is an mcp==2.0.0 dependency
+    httpx2 = None
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -85,160 +124,164 @@ from assessor.ports.cache import NullCache  # noqa: E402
 PSQL_CMD = ["docker", "exec", "coderoot-oss-postgres-1", "psql", "-U", "coderoot", "-d", "coderoot"]
 
 
-# --- the reliable GitHub-request counter --------------------------------------
+# --- the outbound-request recorder --------------------------------------------
 
 @contextlib.contextmanager
 def watch_outbound_hosts():
-    """Monkeypatches `httpx.Client.send` (sync client -- what
-    `assessor/http_client.py::HttpClient` uses for every GitHub REST call) for
-    the duration of the `with` block, yielding a list this fills with every
-    request host seen. Restored on exit regardless of exceptions.
+    """Record `(library, host)` for every outbound HTTP request, across BOTH
+    installed httpx libraries and both their sync and async clients, for the
+    duration of the `with` block. Yields the list it fills; every original is
+    restored on exit regardless of exceptions.
 
-    Deliberately does NOT touch `httpx.AsyncClient` -- `McpToolClient` (the mcp
-    path's own transport, `assessor/mcp_client.py`) uses `create_mcp_http_client`,
-    which is async, so this patch cannot intercept or interfere with genuine MCP
-    traffic; it only ever sees synchronous GitHub REST calls."""
-    seen: list[str] = []
-    orig_send = httpx.Client.send
+    TWO LIBRARIES ARE IN PLAY, and covering only one is how this proof fails
+    silently. This environment has both installed, serving different callers:
 
-    def patched_send(self, request, *a, **kw):
-        seen.append(request.url.host)
-        return orig_send(self, request, *a, **kw)
+        httpx  0.28.x  -- `assessor/http_client.py::HttpClient`, sync, every
+                          GitHub REST call the direct path makes.
+        httpx2 2.9.x   -- MCP SDK 2.0's own fork. `create_mcp_http_client`
+                          returns an `httpx2.AsyncClient` (confirmed by reading
+                          `mcp.shared._httpx_utils`, whose signature is typed
+                          `-> httpx2.AsyncClient`), so ALL MCP transport
+                          traffic goes through httpx2, not httpx.
 
-    httpx.Client.send = patched_send
+    Patching only `httpx` -- what the first version of this script did -- has
+    two consequences, and the second one is a hole in the claim rather than a
+    missing nicety:
+
+      1. No MCP traffic is observed at all, so the recorder looks dead. That is
+         the positive control, and its absence made "0 GitHub requests"
+         indistinguishable from "recorder never ran". This was caught on the
+         first run of the reframed script precisely because the liveness
+         assertion below was added.
+      2. A GitHub request issued through `httpx2` would NOT have been counted.
+         Nothing in the assessor does that today, but the zero-request claim is
+         supposed to hold against the whole process, not against the one client
+         library we happened to instrument. Both libraries are patched so the
+         claim means what it says.
+
+    All wrappers are pass-through; none alters request behaviour."""
+    seen: list[tuple[str, str]] = []
+    originals: list[tuple[type, str, object]] = []
+
+    def _install(mod, mod_name: str) -> None:
+        if mod is None:
+            return
+        for cls_name in ("Client", "AsyncClient"):
+            cls = getattr(mod, cls_name, None)
+            if cls is None:
+                continue
+            orig = cls.send
+            originals.append((cls, "send", orig))
+            if cls_name == "AsyncClient":
+                async def patched(self, request, *a, _orig=orig, _m=mod_name, **kw):
+                    seen.append((_m, request.url.host))
+                    return await _orig(self, request, *a, **kw)
+            else:
+                def patched(self, request, *a, _orig=orig, _m=mod_name, **kw):
+                    seen.append((_m, request.url.host))
+                    return _orig(self, request, *a, **kw)
+            cls.send = patched
+
+    _install(httpx, "httpx")
+    _install(httpx2, "httpx2")
     try:
         yield seen
     finally:
-        httpx.Client.send = orig_send
+        for cls, attr, orig in originals:
+            setattr(cls, attr, orig)
 
 
-def _github_hosts(hosts: list[str]) -> list[str]:
-    return [h for h in hosts if h and ("github.com" in h)]
+def _github_hosts(seen: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    return [(lib, h) for lib, h in seen if h and ("github.com" in h)]
 
 
-# --- CodeRoot's acquired-repo inventory -------------------------------------
+# --- CodeRoot's recorded assessments (the ground truth) -----------------------
 
-def fetch_candidates(limit: int) -> list[dict]:
-    """Most-recently-acquired repos, from CodeRoot's own Postgres, via the
-    exact `docker exec ... psql` path the task brief specifies."""
-    sql = (
-        "SELECT r.id, r.host, r.owner, r.name, a.commit_sha "
-        "FROM coderoot.repo_acquisition a "
-        "JOIN coderoot.repositories r ON r.id = a.repo_id "
-        f"ORDER BY a.acquired_at DESC LIMIT {limit};"
-    )
-    return _rows(sql)
-
-
-def fetch_specific(slugs: list[str]) -> list[dict]:
-    """Look up specific `owner/name` repos (in the order given), for re-running
-    the comparison against a known repo rather than the N-most-recent scan --
-    e.g. to reproduce a specific finding on demand."""
-    rows_by_slug: dict[str, dict] = {}
-    for slug in slugs:
-        owner, _, name = slug.partition("/")
-        sql = (
-            "SELECT r.id, r.host, r.owner, r.name, a.commit_sha "
-            "FROM coderoot.repo_acquisition a "
-            "JOIN coderoot.repositories r ON r.id = a.repo_id "
-            f"WHERE r.owner = '{owner}' AND r.name = '{name}';"
-        )
-        found = _rows(sql)
-        if not found:
-            print(f"WARNING: {slug!r} has no acquisition row in CodeRoot -- skipping",
-                 file=sys.stderr)
-            continue
-        rows_by_slug[slug] = found[0]
-    return [rows_by_slug[s] for s in slugs if s in rows_by_slug]
+_BASE_SQL = """
+SELECT json_build_object(
+  'repo_id', r.id::text,
+  'repo_url', 'https://' || r.host || '/' || r.owner || '/' || r.name,
+  'owner', r.owner,
+  'name', r.name,
+  'stored_sha', a.commit_sha,
+  'content_fingerprint', ra.content_fingerprint,
+  'asset_types', COALESCE(to_json(ra.asset_types), '[]'::json),
+  'promoted_types', COALESCE((SELECT json_agg(DISTINCT e->>'asset_type')
+      FROM jsonb_array_elements(ra.assessment->'promoted_types') e
+      WHERE jsonb_typeof(ra.assessment->'promoted_types') = 'array'), '[]'::json)
+)
+FROM coderoot.repo_assessment ra
+JOIN coderoot.repositories r ON r.id = ra.repo_id
+JOIN coderoot.repo_acquisition a ON a.repo_id = ra.repo_id
+WHERE ra.subdir = ''
+"""
 
 
 def _rows(sql: str) -> list[dict]:
-    out = subprocess.run([*PSQL_CMD, "-t", "-A", "-F", "|", "-c", sql],
+    """psql emits one JSON object per line (`-t -A`), so the array and JSONB
+    columns survive intact -- parsing a delimited text dump would have to
+    re-parse Postgres array literals by hand and would corrupt any value
+    containing the delimiter."""
+    out = subprocess.run([*PSQL_CMD, "-t", "-A", "-c", sql],
                          capture_output=True, text=True, check=True)
-    rows = []
-    for line in out.stdout.splitlines():
-        line = line.strip()
-        if not line:
+    return [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
+
+
+def fetch_expected(limit: int | None) -> list[dict]:
+    sql = _BASE_SQL + " ORDER BY a.acquired_at DESC"
+    if limit is not None:
+        sql += f" LIMIT {int(limit)}"
+    return _rows(sql + ";")
+
+
+def fetch_specific(slugs: list[str]) -> list[dict]:
+    """Look up specific `owner/name` repos, in the order given, for reproducing
+    a finding on demand rather than scanning the corpus."""
+    by_slug: dict[str, dict] = {}
+    for slug in slugs:
+        owner, _, name = slug.partition("/")
+        found = _rows(f"{_BASE_SQL} AND r.owner = '{owner}' AND r.name = '{name}';")
+        if not found:
+            print(f"WARNING: {slug!r} has no recorded assessment in CodeRoot -- skipping",
+                  file=sys.stderr)
             continue
-        repo_id, host, owner, name, sha = line.split("|")
-        rows.append({"repo_id": repo_id, "host": host, "owner": owner, "name": name,
-                    "repo_url": f"https://{host}/{owner}/{name}", "stored_sha": sha})
-    return rows
+        by_slug[slug] = found[0]
+    return [by_slug[s] for s in slugs if s in by_slug]
 
 
-# --- live-HEAD drift check ----------------------------------------------------
-#
-# NOTE: this deliberately does NOT use `GET /rate_limit` to detect anything --
-# that endpoint was tried during development and found to be unreliable in this
-# environment (see the module docstring). The GitHub-request PROOF below
-# (`watch_outbound_hosts`) uses per-call httpx instrumentation instead.
+# --- the comparison -----------------------------------------------------------
 
-def github_live_head(token: str, owner: str, name: str) -> str | None:
-    """Two calls, mirroring exactly what `assessment/content.py::resolve_head`
-    does on the direct path -- used only to detect drift BEFORE spending a git
-    clone on a repo we're going to skip anyway."""
-    def get(url):
-        req = urllib.request.Request(
-            url, headers={"Authorization": f"Bearer {token}", "User-Agent": "coderoot-mcp-parity-check"})
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                return json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return None
-            raise
-    repo = get(f"https://api.github.com/repos/{owner}/{name}")
-    if repo is None:
-        return None
-    branch = repo.get("default_branch", "main")
-    commit = get(f"https://api.github.com/repos/{owner}/{name}/commits/{branch}")
-    return (commit or {}).get("sha")
+def compare(record: dict, expected: dict) -> list[str]:
+    """Mirror of `tests/test_parity.py::_check_record`, returning failure
+    strings instead of raising so one bad repo does not end the run. Keeping
+    the two in step matters: this is the same acceptance rule sub-project 1
+    passed on 130 repos, applied to a record that arrived over MCP."""
+    failures: list[str] = []
+
+    if record["content_fingerprint"] != expected["content_fingerprint"]:
+        failures.append(
+            f"content_fingerprint: coderoot={expected['content_fingerprint']} "
+            f"mcp={record['content_fingerprint']}")
+
+    promoted = set(expected.get("promoted_types") or [])
+    deterministic = sorted(set(expected["asset_types"]) - promoted)
+    if sorted(record["asset_types"]) != deterministic:
+        note = (f" ({len(promoted)} LLM-promoted type(s) excluded from this "
+                f"llm_provider=none comparison: {sorted(promoted)})" if promoted else "")
+        failures.append(
+            f"asset_types: coderoot deterministic={deterministic} "
+            f"mcp={sorted(record['asset_types'])}{note}")
+
+    return failures
 
 
-# --- record diff ---------------------------------------------------------------
-
-def _short(v, limit=200):
-    s = repr(v)
-    return s if len(s) <= limit else s[:limit] + f"...<{len(s)} chars>"
-
-
-def diff_records(a, b, path: str = "") -> list[tuple[str, str, str]]:
-    """Recursive structural diff. Dicts compare by key (order-insensitive,
-    matching Python dict equality); lists compare element-wise IN ORDER --
-    deliberately, since `tree_paths` ordering was flagged as a likely failure
-    mode and must not be silently tolerated by an order-blind comparison."""
-    diffs: list[tuple[str, str, str]] = []
-    if isinstance(a, dict) and isinstance(b, dict):
-        for k in sorted(set(a) | set(b)):
-            p = f"{path}.{k}" if path else k
-            if k not in a:
-                diffs.append((p, "<missing>", _short(b[k])))
-            elif k not in b:
-                diffs.append((p, _short(a[k]), "<missing>"))
-            else:
-                diffs.extend(diff_records(a[k], b[k], p))
-    elif isinstance(a, list) and isinstance(b, list):
-        if a != b:
-            if len(a) != len(b):
-                diffs.append((path, f"<list len={len(a)}>", f"<list len={len(b)}>"))
-            else:
-                for i, (av, bv) in enumerate(zip(a, b)):
-                    if av != bv:
-                        diffs.extend(diff_records(av, bv, f"{path}[{i}]"))
-    else:
-        if a != b:
-            diffs.append((path, _short(a), _short(b)))
-    return diffs
-
-
-# --- main --------------------------------------------------------------------
+# --- main ---------------------------------------------------------------------
 
 def main() -> int:
-    # Repo content (release names, tags, descriptions, ...) is arbitrary
-    # untrusted text and can contain characters outside Windows' default
-    # console codepage (e.g. emoji in a GitHub release name) -- reconfigure
-    # stdout so a diff line never crashes the run partway through instead of
-    # reporting the comparison it already computed.
+    # Repo content (release names, descriptions, ...) is arbitrary untrusted
+    # text and can contain characters outside Windows' default console
+    # codepage -- reconfigure stdout so one emoji cannot crash the run partway
+    # through instead of reporting the comparison it already computed.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -247,168 +290,95 @@ def main() -> int:
     ap.add_argument("--mcp-url", required=True,
                     help="Base URL of a running CodeRoot-MCP Streamable-HTTP server, "
                          "e.g. http://127.0.0.1:8300/mcp")
-    ap.add_argument("--github-token-file", required=True,
-                    help="Path to a file containing one GitHub PAT (used for the direct "
-                         "path AND to prove the mcp path makes zero GitHub requests). "
-                         "Never pass the token as a bare CLI argument.")
-    ap.add_argument("--count", type=int, default=5,
-                    help="How many non-drifted repos to compare (default 5, the brief's floor). "
-                         "Ignored when --repo is given.")
-    ap.add_argument("--candidate-limit", type=int, default=60,
-                    help="How many recently-acquired repos to consider before giving up "
-                         "looking for --count non-drifted ones. Ignored when --repo is given.")
+    ap.add_argument("--count", type=int, default=None,
+                    help="Compare only the N most recently acquired repos "
+                         "(default: the entire recorded corpus). Ignored when --repo is given.")
     ap.add_argument("--repo", action="append", default=None,
-                    help="Compare one specific already-acquired repo, as 'owner/name' "
-                         "(repeatable). Bypasses the most-recently-acquired scan -- use this "
-                         "to reproduce a specific finding on demand. Still subject to the "
-                         "same drift check as the scan path.")
-    ap.add_argument("--acquire-cache-dir", default=None,
-                    help="Scratch dir for DirectSource's git cache. Defaults to a short "
-                         "path under the system temp dir -- on Windows, a deeply-nested "
-                         "default temp dir can exceed MAX_PATH for the .git cache "
-                         "directory name; override this if git fails with "
-                         "'Filename too long'.")
+                    help="Compare one specific repo, as 'owner/name' (repeatable). "
+                         "Bypasses the corpus scan -- use to reproduce a finding on demand.")
     args = ap.parse_args()
 
-    token = Path(args.github_token_file).read_text(encoding="utf-8").strip()
-    if not token:
-        print("ERROR: github token file is empty", file=sys.stderr)
-        return 2
-
-    cache_dir = args.acquire_cache_dir or str(Path(tempfile.gettempdir()) / "cr-mcp-parity-cache")
-    Path(cache_dir).mkdir(parents=True, exist_ok=True)
-
-    direct_settings = Settings(llm_provider="none", github_tokens=token,
-                               acquire_cache_dir=cache_dir, assessor_allow_anonymous=True)
     mcp_settings = Settings(llm_provider="none", coderoot_mcp_url=args.mcp_url,
                             assessor_allow_anonymous=True)
-    # Structural corroboration, printed once: the mcp-path Settings carries no
-    # GitHub credential at all, so McpSource has no means to make an
-    # authenticated GitHub call even by accident.
+    # Structural corroboration of the zero-request claim, asserted before any
+    # work happens: the mcp-path Settings carries no GitHub credential at all.
     assert mcp_settings.github_token_list == [], (
         "mcp_settings unexpectedly carries a GitHub token -- the zero-request "
         "claim below would not be structurally sound")
 
-    direct_source = wiring.build_source(direct_settings)
     mcp_source = wiring.build_source(mcp_settings)
-    assert type(direct_source).__name__ == "DirectSource"
     assert type(mcp_source).__name__ == "McpSource"
     cache = NullCache()
 
-    print(f"direct source: {type(direct_source).__name__} (github_tokens configured: "
-         f"{bool(direct_settings.github_token_list)})")
-    print(f"mcp    source: {type(mcp_source).__name__} -> {args.mcp_url} "
-         f"(github_tokens configured: {bool(mcp_settings.github_token_list)})")
-    print()
-
-    # --- phase 1: find non-drifted candidates ---------------------------------
-    if args.repo:
-        candidates = fetch_specific(args.repo)
-        want = len(candidates)
-        print(f"targeting {want} specific repo(s): {', '.join(args.repo)}")
-    else:
-        candidates = fetch_candidates(args.candidate_limit)
-        want = args.count
-        print(f"considering {len(candidates)} most-recently-acquired repos for drift...")
-    chosen, skipped = [], []
-    for c in candidates:
-        if len(chosen) >= want:
-            break
-        try:
-            live_sha = github_live_head(token, c["owner"], c["name"])
-        except Exception as exc:  # noqa: BLE001
-            skipped.append((c, f"drift-check error: {exc!r}"))
-            continue
-        if live_sha is None:
-            skipped.append((c, "drift-check: repo not found on GitHub"))
-            continue
-        if live_sha != c["stored_sha"]:
-            skipped.append((c, f"HEAD drifted since acquisition (stored={c['stored_sha'][:12]} "
-                               f"live={live_sha[:12]})"))
-            continue
-        chosen.append(c)
-
-    for c, reason in skipped:
-        print(f"  SKIP  {c['owner']}/{c['name']}: {reason}")
-    if len(chosen) < want:
-        hint = ("all requested --repo targets must be non-drifted" if args.repo
-                else "Raise --candidate-limit.")
-        print(f"\nERROR: only found {len(chosen)} non-drifted candidates among "
-             f"{len(candidates)} considered; wanted {want}. {hint}",
-             file=sys.stderr)
+    expected = fetch_specific(args.repo) if args.repo else fetch_expected(args.count)
+    if not expected:
+        print("ERROR: no recorded assessments matched -- nothing to compare", file=sys.stderr)
         return 2
-    print(f"\nselected {len(chosen)} non-drifted repos for parity comparison:")
-    for c in chosen:
-        print(f"  {c['owner']}/{c['name']}  {c['repo_url']}  repo_id={c['repo_id']}  "
-             f"commit={c['stored_sha'][:12]}")
+
+    print(f"mcp source: {type(mcp_source).__name__} -> {args.mcp_url} "
+          f"(github_tokens configured: {bool(mcp_settings.github_token_list)})")
+    print(f"comparing {len(expected)} repo(s) against CodeRoot's recorded assessments\n")
+
+    # --- run the mcp path under the recorder ---------------------------------
+    records: dict[str, dict] = {}
+    errors: dict[str, str] = {}
+    with watch_outbound_hosts() as hosts:
+        for e in expected:
+            subject = {"repo_url": e["repo_url"], "subject_key": e["repo_id"],
+                       "commit_sha": "", "subdir": ""}
+            try:
+                records[e["repo_id"]] = assess_handler(mcp_source, cache, mcp_settings, subject)
+            except Exception as exc:  # noqa: BLE001
+                errors[e["repo_id"]] = repr(exc)
+
+    github_hosts = _github_hosts(hosts)
+    by_lib: dict[str, int] = {}
+    for lib, _ in hosts:
+        by_lib[lib] = by_lib.get(lib, 0) + 1
+    print(f"outbound HTTP calls observed during the run: {len(hosts)}")
+    print(f"  by library: {by_lib or '{}'}")
+    print(f"  distinct hosts: {sorted({h for _, h in hosts}) or '[]'}")
+    print(f"==> GitHub requests attributable to the mcp path: {len(github_hosts)}"
+          f"{'  ' + str(sorted(set(github_hosts))) if github_hosts else ''}")
+    if not hosts:
+        print("WARNING: the recorder observed ZERO outbound calls of any kind. The mcp path "
+              "must produce httpx2 traffic to the MCP server, so this means the recorder "
+              "is not working -- treat the GitHub count above as unproven, not as zero.")
     print()
 
-    # --- phase 2: run ONLY the mcp path, under the httpx-level watch ----------
-    mcp_records: dict[str, dict] = {}
-    with watch_outbound_hosts() as hosts_during_mcp:
-        for c in chosen:
-            subject = {"repo_url": c["repo_url"], "subject_key": c["repo_id"],
-                      "commit_sha": "", "subdir": ""}
-            mcp_records[c["repo_id"]] = assess_handler(mcp_source, cache, mcp_settings, subject)
-    mcp_github_hosts = _github_hosts(hosts_during_mcp)
-    mcp_github_requests = len(mcp_github_hosts)
-    print(f"httpx.Client.send calls observed during mcp-path assessments: {len(hosts_during_mcp)} "
-         f"(hosts: {sorted(set(hosts_during_mcp)) or '[]'})")
-    print(f"==> GitHub requests attributable to the mcp path: {mcp_github_requests}")
+    # --- compare against CodeRoot's recorded output ---------------------------
+    n_match = 0
+    for e in expected:
+        rid, slug = e["repo_id"], f"{e['owner']}/{e['name']}"
+        if rid in errors:
+            print(f"{slug}: ERROR {errors[rid]}")
+            continue
+        failures = compare(records[rid], e)
+        promoted = e.get("promoted_types") or []
+        note = f"  [{len(promoted)} promoted type(s) excluded: {sorted(promoted)}]" if promoted else ""
+        if failures:
+            print(f"{slug}: MISMATCH ({len(failures)} field(s)){note}")
+            for f in failures:
+                print(f"    {f}")
+        else:
+            n_match += 1
+            print(f"{slug}: MATCHES CodeRoot{note}")
+
+    total = len(expected)
+    instrument_live = bool(hosts)
     print()
-
-    # --- phase 3: run the direct path (this DOES use GitHub) ------------------
-    direct_records: dict[str, dict] = {}
-    with watch_outbound_hosts() as hosts_during_direct:
-        for c in chosen:
-            subject = {"repo_url": c["repo_url"], "subject_key": c["repo_id"],
-                      "commit_sha": "", "subdir": ""}
-            direct_records[c["repo_id"]] = assess_handler(direct_source, cache, direct_settings, subject)
-    direct_github_hosts = _github_hosts(hosts_during_direct)
-    print(f"httpx.Client.send calls observed during direct-path assessments: {len(hosts_during_direct)} "
-         f"(hosts: {sorted(set(hosts_during_direct)) or '[]'})")
-    print(f"==> GitHub REST (httpx) requests attributable to the direct path: {len(direct_github_hosts)} "
-         f"(expected: resolve_head's 2 REST calls x {len(chosen)} repos = {2 * len(chosen)}; "
-         f"the git clone itself is a separate `git` subprocess speaking the git protocol, "
-         f"not an httpx call, so it is NOT counted here -- this number undercounts the "
-         f"direct path's true GitHub usage, it does not overcount it)")
-    if len(direct_github_hosts) == 0:
-        print("WARNING: the direct path made zero observed httpx calls to GitHub -- that is "
-             "unexpected (resolve_head should always call api.github.com) and would mean this "
-             "instrumentation itself is not trustworthy; treat the mcp-path zero-count above "
-             "with equivalent suspicion if this fires.")
-    print()
-
-    # --- phase 4: compare full records ----------------------------------------
-    n_identical = 0
-    results = []
-    for c in chosen:
-        rid = c["repo_id"]
-        d, m = direct_records[rid], mcp_records[rid]
-        diffs = diff_records(d, m)
-        identical = not diffs
-        n_identical += identical
-        results.append((c, identical, diffs))
-        status = "IDENTICAL" if identical else f"DIFFERS ({len(diffs)} field(s))"
-        print(f"{c['owner']}/{c['name']}: {status}")
-        print(f"  direct content_fingerprint: {d['content_fingerprint']}")
-        print(f"  mcp    content_fingerprint: {m['content_fingerprint']}")
-        print(f"  direct asset_types: {d['asset_types']}")
-        print(f"  mcp    asset_types: {m['asset_types']}")
-        if diffs:
-            for p, av, bv in diffs:
-                print(f"    DIFF {p}:")
-                print(f"      direct = {av}")
-                print(f"      mcp    = {bv}")
-        print()
-
     print("=" * 72)
-    print(f"SUMMARY: {n_identical}/{len(chosen)} repos byte-identical between "
-         f"source=direct and source=mcp")
-    print(f"GitHub requests on the mcp path: {mcp_github_requests}")
+    print(f"SUMMARY: {n_match}/{total} repos reproduce CodeRoot's recorded assessment "
+          f"through source=mcp")
+    if errors:
+        print(f"         {len(errors)} repo(s) raised an error and were not compared")
+    print(f"GitHub requests on the mcp path: {len(github_hosts)}")
+    print(f"recorder liveness (total outbound calls observed): {len(hosts)}"
+          f"{'' if instrument_live else '  <-- INSTRUMENT NOT LIVE'}")
     print("=" * 72)
 
-    return 0 if n_identical == len(chosen) and mcp_github_requests == 0 else 1
+    ok = (n_match == total) and not errors and not github_hosts and instrument_live
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
