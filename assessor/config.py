@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # --- acquisition ---
     github_tokens: str = ""             # comma-separated PATs
     acquire_cache_dir: str = "/acquire-cache"
-    acquire_timeout_s: int = 120
+    acquire_timeout_s: int = 600
     blob_limit_bytes: int = 1024 * 1024
     max_tree_entries: int = 200_000
 
