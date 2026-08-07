@@ -13,10 +13,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install uv
-      # --frozen makes uv.lock load-bearing: a floor/lock divergence (pyproject
-      # says one thing, the lock resolves another) fails CI instead of going
-      # unnoticed, which is exactly how a stale mcp>=1.2 floor hid previously.
-      - run: uv sync --frozen --all-extras
+      # --locked asserts uv.lock is in sync with pyproject.toml and fails the
+      # build if they have diverged, so a floor bump without a matching
+      # `uv lock` cannot go unnoticed — which is exactly how the stale
+      # mcp>=1.2 floor hid previously. (--frozen would not catch this: it
+      # syncs from whatever the lock already says without checking it against
+      # pyproject at all.)
+      - run: uv sync --locked --all-extras
       - run: uv run pytest -v
 
   image:
