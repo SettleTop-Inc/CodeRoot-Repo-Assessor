@@ -1,0 +1,29 @@
+name: ci
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install uv
+      - run: uv pip install --system -e ".[dev]"
+      - run: pytest -v
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t coderoot-repo-assessor:ci .
+      # Fail-closed must hold in the built image, not only in unit tests.
+      - name: assert the image refuses to start unauthenticated
+        run: |
+          if docker run --rm coderoot-repo-assessor:ci; then
+            echo "image started without auth configured" && exit 1
+          fi
