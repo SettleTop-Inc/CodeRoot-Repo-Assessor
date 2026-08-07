@@ -14,9 +14,7 @@ reaching a subtree), different channel: probes vs the classifier.
 from assessor.assessment import assemble
 
 
-from assessor.config import Settings
-
-_S = Settings(assessor_api_token="x")
+from conftest import _S
 
 _URL = "https://github.com/getsentry/sentry-mcp"
 _META = {"topics": ["mcp"], "description": "An MCP server for Sentry"}

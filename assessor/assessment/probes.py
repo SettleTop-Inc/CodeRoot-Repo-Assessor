@@ -557,9 +557,10 @@ def detect(matches, compositions, meta, name, content, *, capped, shape_suppress
     reconciliation (spec §5.3). `matches` is the classifier's match list (each
     {"asset_type", "marker_tier", ...}); `compositions` is {type: composition_dict};
     `meta` is {"description", "topics"} (name passed separately — meta used by
-    classification is unchanged). `session`/`provider` thread through to the LLM
-    gateway exactly like `purpose.extract`'s seam (`session` is the DB cache
-    session; `provider` overrides `get_provider()` — used by tests).
+    classification is unchanged). `cache`/`settings`/`provider` thread through to
+    the LLM gateway exactly like `purpose.extract`'s seam (`cache` is the
+    CachePort; `settings` is the injected Settings `get_provider()` reads;
+    `provider` overrides `get_provider()` entirely — used by tests).
 
     Additive only: never reads/writes anything that feeds classification, risk, or
     the fingerprint. The deterministic `probe`/`evidence_state` computed below are

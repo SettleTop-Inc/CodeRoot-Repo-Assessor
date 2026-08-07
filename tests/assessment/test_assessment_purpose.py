@@ -3,9 +3,7 @@ import json
 from assessor.assessment.purpose import extract
 
 
-from assessor.config import Settings
-
-_S = Settings(assessor_api_token="x")
+from conftest import _S
 
 
 class _Stub:

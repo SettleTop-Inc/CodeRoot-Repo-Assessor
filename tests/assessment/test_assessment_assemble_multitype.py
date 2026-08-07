@@ -6,9 +6,7 @@ from assessor.assessment import assemble, probes
 from assessor.assessment.registry import TIER_CONF
 
 
-from assessor.config import Settings
-
-_S = Settings(assessor_api_token="x")
+from conftest import _S
 
 HYBRID = {  # §13 true hybrid: agent-native dep AND an MCP server construct
     "package.json": json.dumps({"dependencies": {"@openai/agents": "^1",

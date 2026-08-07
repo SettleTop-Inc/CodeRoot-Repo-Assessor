@@ -22,9 +22,7 @@ from assessor.assessment import fingerprint as fingerprint_mod
 from assessor.assessment.content import select_source_paths
 
 
-from assessor.config import Settings
-
-_S = Settings(assessor_api_token="x")
+from conftest import _S
 
 _REGISTRY_VERSION_SENTINEL = "__REGISTRY_VERSION_SENTINEL__"
 
@@ -44,7 +42,7 @@ def _fingerprint_normalized(repo_url: str, content: dict, paths, **build_kwargs)
         return real_compute(payload)
 
     with mock.patch("assessor.assessment.assemble.compute_fingerprint", side_effect=_spy):
-        assemble.build(repo_url, content, "sha", None, paths=paths, **build_kwargs, settings=_S)
+        assemble.build(repo_url, content, "sha", None, paths=paths, **{"settings": _S, **build_kwargs})
     payload = dict(captured["payload"])
     payload["registry_version"] = _REGISTRY_VERSION_SENTINEL
     return real_compute(payload)

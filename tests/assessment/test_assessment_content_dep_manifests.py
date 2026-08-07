@@ -4,9 +4,7 @@ from assessor.assessment.content import (ALLOWLIST_VERSION, _MANIFEST_MAX_BYTES,
                                              dep_manifest_paths, select_source_paths)
 
 
-from assessor.config import Settings
-
-_S = Settings(assessor_api_token="x")
+from conftest import _S
 
 
 def _cand(paths):  # path -> (blob_sha, size)

@@ -9,9 +9,7 @@ from assessor.assessment.probes import detect, _name_declares
 from assessor.assessment.registry import IDENTITY_TERMS
 
 
-from assessor.config import Settings
-
-_S = Settings(assessor_api_token="x")
+from conftest import _S
 
 
 def test_name_declares_token_boundaries():

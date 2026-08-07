@@ -9,9 +9,7 @@ path-scoping honesty rule. A subdir assessment carries no probes; whole-repo sti
 from assessor.assessment import assemble
 
 
-from assessor.config import Settings
-
-_S = Settings(assessor_api_token="x")
+from conftest import _S
 
 _CONTENT = {"README.md": "x", "docs/guide.md": "how to use it"}   # no mcp/tool markers anywhere
 _META = {"topics": ["mcp"], "description": "An MCP server for Sentry"}

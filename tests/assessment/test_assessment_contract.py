@@ -2,9 +2,7 @@ from assessor.assessment import assemble
 from assessor.assessment.registry import TYPE_MODULES
 
 
-from assessor.config import Settings
-
-_S = Settings(assessor_api_token="x")
+from conftest import _S
 
 
 def test_all_modules_accept_paths_and_meta():

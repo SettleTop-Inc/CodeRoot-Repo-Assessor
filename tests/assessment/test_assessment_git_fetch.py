@@ -15,6 +15,7 @@ Two layers, mirroring `test_git_disk_scan.py`:
 from __future__ import annotations
 
 import base64
+import inspect as inspect_mod
 import json
 import os
 import shutil
@@ -23,6 +24,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import get_args, get_origin, get_type_hints
 
 import pytest
 
@@ -738,11 +740,42 @@ def test_real_git_fetch_raises_a_classified_error_for_missing_repo(tmp_path, git
     with pytest.raises(content.ContentUnavailable):
         fetcher.fetch(f"git://127.0.0.1:{port}/does-not-exist.git", REPO_ID, SHA)
 
-# NOTE: CodeRoot's `test_fetcher_doubles_match_the_real_fetch_signature` (and its
-# `_fetch_return_arity`/`_double_kwargs` helpers) is deliberately NOT moved here. It
-# asserted signature parity between `GitContentFetcher.fetch` and fake-fetcher test
-# doubles defined in `test_assessment_acquire.py`, `test_assessment_wiring.py` and
-# `test_runner.py` — all three test CodeRoot's `run_acquire`/pipeline-worker wiring
-# around `acquire.py`, which this plan explicitly excludes from the move (acquire.py,
-# service.py and creation_info.py stay in CodeRoot). None of those three modules exist
-# in this repo and never will, so the cross-module assertion has nothing left to check.
+# ============================================================================
+# Protocol/implementation arity guard — the LOCAL half of CodeRoot's
+# `test_fetcher_doubles_match_the_real_fetch_signature`.
+# ============================================================================
+#
+# CodeRoot's original test had two independent checks: (1) `Fetcher.fetch`
+# (the Protocol) agrees with `GitContentFetcher.fetch` (the implementation),
+# and (2) three fake-fetcher doubles defined in `test_assessment_acquire.py`,
+# `test_assessment_wiring.py` and `test_runner.py` also agree. Half (2) is NOT
+# moved here — those three modules test CodeRoot's `run_acquire`/pipeline-worker
+# wiring around `acquire.py`, which this plan explicitly excludes from the move,
+# and none of the three exist in this repo. Half (1) has no CodeRoot dependency
+# at all: both `Fetcher` and `GitContentFetcher` live in this same moved
+# `git_fetch.py`, so it is restored here as a small self-contained test.
+#
+# Why it matters: `git_fetch.py:418-419`'s `_real_fetcher_conforms: type[Fetcher]
+# = GitContentFetcher` is a static-only, `TYPE_CHECKING`-gated annotation, and
+# this repo runs no type checker — that leaves the Protocol/implementation seam
+# completely unguarded at runtime without this test. `ports/source.py`'s
+# `DirectSource` (Task 6) is built around this exact 4-tuple
+# `fetch(clone_url, repo_id, sha)` signature — the original bug this test was
+# written to catch was a 3-vs-4-value unpacking drift between the two.
+
+
+def _fetch_return_arity(fn) -> int:
+    """How many values `fn`'s declared return tuple unpacks into."""
+    ret = get_type_hints(fn)["return"]
+    assert get_origin(ret) is tuple, f"{fn.__qualname__} must return a tuple, got {ret!r}"
+    return len(get_args(ret))
+
+
+def test_protocol_matches_the_real_fetcher_signature():
+    """`Fetcher.fetch` (the Protocol `ports.source.DirectSource` is built against)
+    must not drift from `GitContentFetcher.fetch` (the real implementation)."""
+    real = GitContentFetcher.fetch
+    real_params = list(inspect_mod.signature(real).parameters)
+    real_arity = _fetch_return_arity(real)
+    assert _fetch_return_arity(Fetcher.fetch) == real_arity, \
+        "the Protocol itself drifted from GitContentFetcher.fetch"
