@@ -1,0 +1,34 @@
+{
+  "subject": {
+    "repo_url": "https://github.com/demo/plain-repo",
+    "subject_key": "fixture-2",
+    "commit_sha": "bbb222",
+    "subdir": ""
+  },
+  "snapshot": {
+    "commit_sha": "bbb222",
+    "metadata": {
+      "description": "Just some utility scripts",
+      "homepage": null,
+      "topics": [],
+      "license_spdx": null
+    },
+    "tree_paths": [
+      "main.py",
+      "README.md"
+    ],
+    "tree_capped": false,
+    "marker_hits": [],
+    "files": {
+      "main.py": "def main():\n    print('hello world')\n\nif __name__ == '__main__':\n    main()\n",
+      "README.md": "# plain repo\n\nNothing special here.\n"
+    },
+    "source_coverage_capped": false,
+    "allowlist_version": 7
+  },
+  "metrics": null,
+  "expected": {
+    "asset_types": [],
+    "content_fingerprint": "cc51fa8cf048c3c52805901de5d3e194f82be95ff218a6034dc47a7f41f6f3ca"
+  }
+}

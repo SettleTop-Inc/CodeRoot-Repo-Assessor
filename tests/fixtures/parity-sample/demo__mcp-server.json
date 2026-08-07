@@ -1,0 +1,41 @@
+{
+  "subject": {
+    "repo_url": "https://github.com/demo/mcp-server",
+    "subject_key": "fixture-1",
+    "commit_sha": "aaa111",
+    "subdir": ""
+  },
+  "snapshot": {
+    "commit_sha": "aaa111",
+    "metadata": {
+      "description": "A demo MCP server",
+      "homepage": null,
+      "topics": [
+        "mcp"
+      ],
+      "license_spdx": "MIT"
+    },
+    "tree_paths": [
+      "server.py",
+      "README.md"
+    ],
+    "tree_capped": false,
+    "marker_hits": [],
+    "files": {
+      "server.py": "from mcp.server.fastmcp import FastMCP\nmcp = FastMCP('demo')\n@mcp.tool()\ndef add(a: int, b: int) -> int:\n    return a + b\n",
+      "README.md": "# demo mcp server\n\nA tiny MCP server used for parity fixtures.\n"
+    },
+    "source_coverage_capped": false,
+    "allowlist_version": 7
+  },
+  "metrics": {
+    "license": "MIT",
+    "releases": []
+  },
+  "expected": {
+    "asset_types": [
+      "mcp_server"
+    ],
+    "content_fingerprint": "84314b3e7361d6ca5a9f041264781c546a9a377cb605e40f559a439c030c3a5c"
+  }
+}
