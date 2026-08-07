@@ -56,9 +56,16 @@ def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
         expected = f"Bearer {settings.assessor_api_token}"
         # Guard the None case before compare_digest, which requires str/bytes
         # on both sides and would raise TypeError on a missing header instead
-        # of the intended 401. Constant-time comparison so a wrong bearer
+        # of the intended 401. Compare as bytes, not str: compare_digest
+        # rejects non-ASCII *strings* outright (TypeError), so an
+        # unauthenticated caller sending a header with any byte >= 0x80 (a
+        # pasted token with a smart quote, any multi-byte UTF-8 character)
+        # would 500 inside the auth check itself before any bearer was even
+        # checked. Encoding removes the restriction entirely rather than
+        # special-casing non-ASCII input. Constant-time so a wrong bearer
         # can't be distinguished by timing from a near-miss.
-        if authorization is None or not secrets.compare_digest(authorization, expected):
+        if authorization is None or not secrets.compare_digest(
+                authorization.encode(), expected.encode()):
             raise HTTPException(status_code=401, detail="unauthorized")
 
     @app.get("/healthz")

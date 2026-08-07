@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi.testclient import TestClient
 
 from assessor.app import build_app
@@ -136,3 +138,33 @@ def test_openapi_and_docs_are_not_served():
     assert c.get("/openapi.json").status_code == 404
     assert c.get("/docs").status_code == 404
     assert c.get("/redoc").status_code == 404
+
+
+def test_non_ascii_bearer_header_is_401_not_500():
+    # Regression for fix round 2: secrets.compare_digest raises TypeError on a
+    # non-ASCII *str* (fixed by comparing .encode()d bytes instead). httpx's
+    # client-side header encoding rejects a non-ASCII header value before it
+    # ever reaches the app, so TestClient(...).get(..., headers=...) CANNOT
+    # exercise this path -- it would raise UnicodeEncodeError in the test
+    # itself, never touching assessor.app's auth(). Drive the ASGI app
+    # directly instead, with the header injected as raw latin-1-encoded bytes
+    # into the scope, matching how a real non-ASCII header arrives over the
+    # wire (ASGI headers are always raw bytes; latin-1 is what an ASGI server
+    # decodes/carries them as per the spec).
+    app = build_app(Settings(assessor_api_token="tok"), _Source(), NullCache())
+    headers = [(b"authorization", "Bearer ünicode".encode("latin-1"))]
+    scope = {"type": "http", "method": "GET", "path": "/v1/version",
+             "raw_path": b"/v1/version", "query_string": b"", "headers": headers,
+             "client": ("test", 123), "server": ("test", 80), "scheme": "http",
+             "http_version": "1.1"}
+    messages = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    status = next(m["status"] for m in messages if m["type"] == "http.response.start")
+    assert status == 401
