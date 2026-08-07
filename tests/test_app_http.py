@@ -1,11 +1,13 @@
 import asyncio
 
+import pytest
 from fastapi.testclient import TestClient
 
 from assessor.app import build_app
 from assessor.config import Settings
 from assessor.errors import NotDerivable, RepoGone
 from assessor.ports.cache import NullCache
+from assessor.ports.mcp_source import McpSource
 from assessor.ports.source import DirectSource
 
 _MCP = {"server.py": (
@@ -149,6 +151,81 @@ def test_assess_rejects_a_non_direct_source_as_unsupported():
     assert r.status_code == 400
     body = r.json()
     assert body["error"] == "unsupported_field" and body["field"] == "source"
+
+
+def test_assess_rejects_an_unrecognized_source_as_unsupported():
+    r = _client().post("/v1/assess", json={**_BODY, "source": "bogus"},
+                       headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 400
+    body = r.json()
+    assert body["error"] == "unsupported_field" and body["field"] == "source"
+
+
+class _McpTools:
+    """The six-tool-method object McpSource wraps — see
+    tests/test_ports_mcp_source.py for the same shape."""
+    def get_subject(self, repo_id, subdir=""):
+        return {"commit_sha": "abc123", "description": None, "homepage": None,
+                "topics": [], "license_spdx": None, "tree_paths": list(_MCP),
+                "content_paths": list(_MCP), "tree_capped": False, "marker_hits": [],
+                "source_coverage_capped": False, "allowlist_version": 7}
+
+    def read_files(self, repo_id, commit_sha, paths):
+        return {"files": dict(_MCP), "missing": []}
+
+    def get_metrics(self, repo_id): return None
+    def get_prior_assessment(self, repo_id, subdir=""): return None
+
+
+def test_assess_accepts_source_mcp_when_an_mcp_url_is_configured():
+    """The other half of the guard directly above: a deployment that HAS
+    configured CodeRoot-MCP must actually accept `source: "mcp"`, not merely
+    stop 400ing it. Asserts on the wired source's genuine type/capability
+    (McpSource, which never touches GitHub — `acquire` raises
+    NotImplementedError) rather than only checking the request succeeded, so
+    a regression that accepted the field but silently fell back to
+    DirectSource would still be caught."""
+    s = Settings(assessor_api_token="tok", coderoot_mcp_url="http://mcp.local:9000")
+    source = McpSource(_McpTools())
+    assert isinstance(source, McpSource)
+    with pytest.raises(NotImplementedError):
+        source.acquire("https://github.com/o/n", prior=None)
+    c = _client(settings=s, source=source)
+    r = c.post("/v1/assess", json={**_BODY, "source": "mcp"},
+               headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 200
+    assert "mcp_server" in r.json()["asset_types"]
+
+
+def test_create_app_selects_mcp_source_when_configured(monkeypatch):
+    """End-to-end confirmation that the production factory (not just
+    build_app, which takes source as a given) genuinely wires McpSource when
+    configured. Mirrors test_http_client.py's C1-regression pattern: spy on
+    build_app to capture what create_app() actually constructed. The
+    mcp-client seam is monkeypatched (assessor.mcp_client.McpToolClient does
+    not exist yet — a later task in this same plan) so this proves the
+    SELECTION, not the real transport."""
+    import assessor.app as app_module
+    import assessor.wiring as wiring_module
+
+    monkeypatch.setenv("ASSESSOR_API_TOKEN", "tok")
+    monkeypatch.setenv("CODEROOT_MCP_URL", "http://mcp.local:9000")
+    app_module.get_settings.cache_clear()
+    monkeypatch.setattr(wiring_module, "_build_mcp_client", lambda s: _McpTools())
+    captured = {}
+    real_build_app = app_module.build_app
+
+    def spy(settings, source, cache):
+        captured["source"] = source
+        return real_build_app(settings, source, cache)
+
+    monkeypatch.setattr(app_module, "build_app", spy)
+    try:
+        app_module.create_app()
+    finally:
+        app_module.get_settings.cache_clear()
+
+    assert isinstance(captured["source"], McpSource)
 
 
 def test_assess_rejects_a_non_empty_commit_sha_as_unsupported():

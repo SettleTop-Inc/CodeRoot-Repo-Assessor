@@ -15,7 +15,7 @@ from .handlers import acquire_handler, assess_handler
 from .ports.cache import CachePort, NullCache
 from .ports.source import Source
 from .versions import version_payload
-from .wiring import build_direct_source
+from .wiring import build_source
 
 
 class SubjectIn(BaseModel):
@@ -127,17 +127,25 @@ def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
                                 content={"error": "unsupported_field", "field": "commit_sha",
                                          "reason": "commit_sha pinning is not supported "
                                                    "by this deployment"})
-        # McpSource does not exist yet (a later, separate plan). Silently
-        # falling back to DirectSource for `source: "mcp"` would perform a
-        # live GitHub acquisition instead of the zero-cost re-derivation the
-        # caller asked for, so refuse explicitly. The field stays on the
-        # model so the request contract shape is stable for when McpSource
-        # lands.
-        if body.source != "direct":
+        # "direct" always works. "mcp" only works when this deployment is
+        # actually wired to CodeRoot-MCP (wiring.build_source picks McpSource
+        # over DirectSource from settings.coderoot_mcp_url) — silently
+        # falling back to DirectSource for an unconfigured deployment would
+        # perform a live GitHub acquisition instead of the zero-cost
+        # re-derivation the caller asked for, so an unconfigured deployment
+        # keeps refusing explicitly rather than quietly substituting direct.
+        # Anything else is refused outright: the field stays on the model so
+        # the request contract shape is stable as new sources land.
+        if body.source not in ("direct", "mcp"):
             return JSONResponse(status_code=400,
                                 content={"error": "unsupported_field", "field": "source",
                                          "reason": f"source {body.source!r} is not "
                                                    "supported by this deployment"})
+        if body.source == "mcp" and not settings.coderoot_mcp_url:
+            return JSONResponse(status_code=400,
+                                content={"error": "unsupported_field", "field": "source",
+                                         "reason": "source 'mcp' requires an MCP URL "
+                                                   "to be configured on this deployment"})
         try:
             return assess_handler(source, cache, settings, body.subject.model_dump())
         except NotDerivable as exc:
@@ -162,4 +170,4 @@ def create_app() -> FastAPI:
     this module must have no side effects, and get_settings() deliberately raises
     when auth is unconfigured (config.py's fail-closed validator)."""
     s = get_settings()
-    return build_app(s, build_direct_source(s), NullCache())
+    return build_app(s, build_source(s), NullCache())
