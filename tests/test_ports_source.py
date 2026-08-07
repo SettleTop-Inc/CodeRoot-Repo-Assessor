@@ -103,3 +103,49 @@ def test_direct_source_has_no_metrics_and_no_prior_assessment(monkeypatch):
                "commit_sha": "abc123", "subdir": ""}
     assert src.metrics(subject) is None
     assert src.prior_assessment(subject) is None
+
+
+def test_split_strips_a_single_trailing_dot_git_suffix():
+    """"https://github.com/o/n.git" is GitHub's own canonical clone-URL form, so
+    callers will paste it. Without stripping the suffix, resolve_head would
+    query a repo literally named "n.git" (a wrong RepoGone/410 for a repo that
+    exists) and the acquire branch would clone ".../n.git.git"."""
+    from assessor.ports.source import _split
+
+    assert _split("https://github.com/o/n.git") == ("o", "n")
+
+
+def test_fetcher_repo_id_satisfies_the_real_validator(monkeypatch):
+    """The `_Fetcher` test double ignores repo_id entirely, so none of the
+    tests above can catch a repo_id that GitContentFetcher's real precondition
+    would reject. repo_id must be hex-only (it doubled as a database UUID in
+    CodeRoot and is used as a bare-repo cache directory name), so the naive
+    "owner/name" string fails validation and every real, non-short-circuited
+    acquire would raise before any git call. Exercise the real validator
+    against what DirectSource actually generates, for a realistic owner/name."""
+    from assessor.assessment.git_fetch import _validate_repo_key
+
+    captured = {}
+
+    class _CapturingFetcher:
+        def fetch(self, clone_url, repo_id, sha):
+            captured["repo_id"] = repo_id
+            return ({}, (), False, [])
+
+    src = _direct(_Http(), _CapturingFetcher(), monkeypatch)
+    src.acquire("https://github.com/SettleTop-Inc/CodeRoot-MCP", prior=None)
+    # Raises ContentUnavailable if the real validator rejects the generated key.
+    assert _validate_repo_key(captured["repo_id"]) == captured["repo_id"]
+
+
+def test_snapshot_returns_the_acquired_snapshot(monkeypatch):
+    """snapshot() ignores subject["commit_sha"] and always re-resolves HEAD via
+    prior=None — this is deliberate (Task 9's MCP tool passes commit_sha: "" for
+    exactly this reason), pinned here so the choice is explicit rather than
+    accidental."""
+    src = _direct(_Http(sha="abc123"), _Fetcher(), monkeypatch)
+    subject = {"repo_url": "https://github.com/o/n", "subject_key": "o/n",
+               "commit_sha": "deadbeef", "subdir": ""}
+    snap = src.snapshot(subject)
+    assert snap["commit_sha"] == "abc123"
+    assert snap["files"] == {"README.md": "hi"}

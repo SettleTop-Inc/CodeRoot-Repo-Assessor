@@ -5,6 +5,7 @@ The CodeRoot-MCP plan adds McpSource, which reads an already-persisted
 snapshot — that is what preserves zero-GitHub-cost re-derivation."""
 from __future__ import annotations
 
+import hashlib
 from typing import Literal, Protocol, TypedDict, runtime_checkable
 from urllib.parse import urlsplit
 
@@ -61,9 +62,19 @@ def _split(repo_url: str) -> tuple[str, str]:
     # exactly two segments closes that: extra segments of any kind are rejected.
     path = urlsplit(repo_url).path.strip("/")
     parts = path.split("/") if path else []
-    if len(parts) != 2 or not _valid_slug(parts[0]) or not _valid_slug(parts[1]):
+    if len(parts) != 2:
         raise ValueError(f"invalid repo_url: {repo_url!r}")
-    return parts[0], parts[1]
+    owner, name = parts
+    # GitHub's own canonical clone-URL form ("https://github.com/o/n.git") has a
+    # trailing ".git" on the repo segment. Callers will paste that form, so strip
+    # exactly one suffix before validating rather than querying a repo literally
+    # named "n.git" (a 404 that becomes a wrong RepoGone/410 for a repo that
+    # exists) and cloning ".../n.git.git".
+    if name.endswith(".git"):
+        name = name[: -len(".git")]
+    if not _valid_slug(owner) or not _valid_slug(name):
+        raise ValueError(f"invalid repo_url: {repo_url!r}")
+    return owner, name
 
 
 def _bucket_b(repo_obj: dict) -> dict:
@@ -97,7 +108,13 @@ class DirectSource:
             return {"status": "unchanged", "snapshot": None, "commit_sha": sha,
                     "metadata": meta, "allowlist_version": alv}
         clone_url = f"https://github.com/{owner}/{name}.git"
-        files, paths, capped, hits = self.fetcher.fetch(clone_url, f"{owner}/{name}", sha)
+        # GitContentFetcher's repo_id must satisfy _REPO_KEY_RE (hex only — it was
+        # a database UUID in CodeRoot and is used as a bare-repo directory name),
+        # so "owner/name" itself is rejected before any git call. There is no UUID
+        # here; a stable, deterministic hex digest of the slug is the honest
+        # equivalent and keeps the on-disk cache path fixed per repo.
+        repo_key = hashlib.sha256(f"{owner}/{name}".encode()).hexdigest()
+        files, paths, capped, hits = self.fetcher.fetch(clone_url, repo_key, sha)
         return {"status": "acquired", "commit_sha": sha, "metadata": meta,
                 "allowlist_version": alv,
                 "snapshot": {"commit_sha": sha, "metadata": meta,
