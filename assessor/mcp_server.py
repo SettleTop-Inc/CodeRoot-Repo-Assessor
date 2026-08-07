@@ -49,7 +49,7 @@ def build_mcp(settings: Settings, source: Source, cache: CachePort) -> MCPServer
         commit SHA alongside the selected file bodies."""
         # Mirrors app.py's /v1/acquire exception mapping. NotDerivable is not
         # caught here because acquire_handler can never raise it — only
-        # assess_handler's post-snapshot empty-files check does — matching
+        # assess_handler's post-snapshot no-snapshot check does — matching
         # the HTTP surface, which also only catches RepoGone/ValueError on
         # this route.
         try:

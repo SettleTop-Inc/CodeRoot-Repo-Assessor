@@ -66,9 +66,31 @@ def test_asset_id_comes_from_subject_key_not_repo_url():
     assert a["assessment"]["asset_id"] == b["assessment"]["asset_id"]
 
 
-def test_empty_snapshot_raises_not_derivable():
+def test_empty_files_snapshot_derives_not_an_asset():
+    """Task 11 fix round 1: CodeRoot's own pipeline reaches assemble.build
+    with empty content whenever acquisition genuinely succeeded and found
+    nothing selectable, and derives a normal not_an_asset record rather than
+    raising — an empty-but-present `files` dict is a legitimate input, not a
+    NotDerivable condition. The parity harness (tests/test_parity.py) caught
+    this diverging on octocat/Hello-World."""
+    r = assess_handler(_Source({}), NullCache(), _S, _SUBJECT)
+    assert r["is_asset"] is False
+    assert r["asset_type"] == "not_an_asset"
+    assert r["asset_types"] == []
+
+
+def test_no_snapshot_raises_not_derivable():
+    """The actual NotDerivable trigger: the source could not produce a
+    snapshot at all (falsy, e.g. None) — distinct from a snapshot that was
+    read and legitimately came back empty, per the test above."""
+    class _NoSnapshot:
+        def acquire(self, repo_url, *, prior): raise AssertionError("not called")
+        def snapshot(self, subject): return None
+        def metrics(self, subject): return None
+        def prior_assessment(self, subject): return None
+
     with pytest.raises(NotDerivable):
-        assess_handler(_Source({}), NullCache(), _S, _SUBJECT)
+        assess_handler(_NoSnapshot(), NullCache(), _S, _SUBJECT)
 
 
 def test_mcp_server_is_classified():

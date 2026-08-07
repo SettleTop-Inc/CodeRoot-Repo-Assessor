@@ -17,6 +17,16 @@ is the record CodeRoot's own pipeline produced for that repo. The key names in
 both the "subject"/"snapshot" objects and the assessor.ports.source.Subject /
 Snapshot TypedDicts must match exactly — see tests/test_parity.py, which reads
 this exact shape.
+
+"expected" also carries "promoted_types": the asset_type(s), if any, that
+CodeRoot's pipeline classified only via a citation-backed LLM promotion
+(assessment.promoted_types), not a deterministic marker. The parity harness
+runs with llm_provider=none and can never reproduce a promotion, so it
+compares asset_types against `expected.asset_types - promoted_types` — the
+deterministic portion — rather than the full CodeRoot output. Fix round 1
+(2026-08-07) added this field after the first live corpus run: without it,
+every LLM-promoted repo looked like a parity failure when it was actually the
+harness comparing an LLM-off run against an LLM-on expectation.
 """
 import json
 import sys
@@ -37,13 +47,24 @@ SELECT r.id, r.host, r.owner, r.name, a.commit_sha, a.description, a.homepage,
 """)
 
 
+def _promoted_types(assessment_blob) -> list[str]:
+    # assessment_blob is a JSONB column; depending on driver/dialect config it
+    # may already deserialize to a dict, or arrive as a raw JSON string —
+    # handle both rather than assuming.
+    if isinstance(assessment_blob, str):
+        assessment_blob = json.loads(assessment_blob)
+    entries = (assessment_blob or {}).get("promoted_types") or []
+    return sorted({e["asset_type"] for e in entries})
+
+
 def main(out_dir: str) -> None:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     engine = create_engine(os.environ["DATABASE_URL"])
-    from coderoot_oss.artifacts import get_store
+    from coderoot_oss.artifacts import build_artifact_store
+    from coderoot_oss.config import get_settings
     from sqlalchemy.orm import Session
-    store = get_store()
+    store = build_artifact_store(get_settings())
     with Session(engine) as session:
         for row in session.execute(_SQL).mappings():
             files = {}
@@ -75,7 +96,8 @@ def main(out_dir: str) -> None:
                 "metrics": ({"license": metrics["license"],
                              "releases": metrics["releases"]} if metrics else None),
                 "expected": {"asset_types": list(row["asset_types"] or []),
-                             "content_fingerprint": row["content_fingerprint"]},
+                             "content_fingerprint": row["content_fingerprint"],
+                             "promoted_types": _promoted_types(row["assessment"])},
             }
             (out / f"{row['owner']}__{row['name']}.json").write_text(
                 json.dumps(payload), encoding="utf-8")

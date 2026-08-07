@@ -17,11 +17,18 @@ def acquire_handler(source: Source, repo_url: str,
 def assess_handler(source: Source, cache: CachePort, settings: Settings,
                    subject: Subject) -> dict:
     snap = source.snapshot(subject)
-    if not snap or not snap.get("files"):
+    if not snap:
         # Distinct from a 5xx on purpose: the caller should re-acquire, not
-        # retry. Deriving from a partial set would produce a record that reads
-        # as "we looked and found nothing".
-        raise NotDerivable("snapshot has no file bodies")
+        # retry. This is the "could not be READ" state — no snapshot at all —
+        # not "was read and found nothing". An empty-but-present `files` dict
+        # is a legitimate input: CodeRoot's own pipeline reaches assemble.build
+        # with empty content whenever acquisition genuinely succeeded and
+        # found nothing selectable, and derives a normal not_an_asset record
+        # rather than refusing. Conflating the two here (checking
+        # `snap.get("files")` too) previously raised NotDerivable for those
+        # repos, diverging from CodeRoot's behaviour — see the Task 11 parity
+        # harness, which is what caught it.
+        raise NotDerivable("no snapshot available")
     metrics = source.metrics(subject) or {}
     return assemble.build(
         subject["repo_url"], snap["files"], snap["commit_sha"],

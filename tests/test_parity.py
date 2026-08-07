@@ -1,15 +1,41 @@
 # tests/test_parity.py
-"""Behaviour preservation is the acceptance gate for the extraction: the same
-corpus must produce byte-identical fingerprints and identical asset_types.
+"""Behaviour preservation is the acceptance gate for the extraction.
+
+WHAT THIS HARNESS ACTUALLY MEASURES, WITH THE LLM OFF (`llm_provider="none"`,
+the default): `content_fingerprint` is compared UNCONDITIONALLY, for every
+case, because `assemble.build` computes it from `det_asset_types` — the
+deterministic classification only — before any citation-backed promotion is
+applied (see assemble.py's PAYLOAD SPLIT comment). Promotion can never move
+the hash. A fingerprint mismatch is therefore always a real divergence.
+
+`asset_types` is a different story: CodeRoot's recorded `expected.asset_types`
+can include types added by a citation-backed LLM promotion
+(`assessment.promoted_types`), which this llm_provider=none harness can never
+reproduce. Comparing against the raw `expected.asset_types` would report a
+promoted repo as a parity failure when it is really an LLM-off run being
+compared against an LLM-on expectation — that was a real bug in fix round 0
+of this file, caught on the first live 130-repo run (3 of 4 failures were
+exactly the 3 promoted repos; content_fingerprint matched on all 130). The fix
+(fix round 1): compare `asset_types` against `expected.asset_types` MINUS
+`expected.promoted_types` — the deterministic portion, which is what an
+LLM-off run can actually be expected to reproduce. Whenever that set is
+non-empty, the assertion message says so explicitly, so a failure reads as
+"N promoted type(s) excluded, here's why" rather than a silent drop.
+
+That means this harness proves fingerprint parity in full, and asset_types
+parity for the deterministic path only. It does NOT independently verify that
+CodeRoot's own promotions were sound — only that the deterministic classifier
+this service extracted still agrees with CodeRoot's deterministic classifier.
 
 Two test functions live here, and they prove different things:
 
-* `test_record_matches_coderoot` is the real parity check. It is skipped
-  unless ASSESSOR_CORPUS_DIR points at an export from
-  scripts/export_corpus.py, so the suite stays runnable without a CodeRoot
-  database. When it skips, that means parity against CodeRoot was NOT
-  verified this run — not merely that an environment variable was unset. A
-  skipped run must never be read as a passing parity result.
+* `test_record_matches_coderoot` is the real parity check, against real
+  CodeRoot-recorded data. It is skipped unless ASSESSOR_CORPUS_DIR points at
+  an export from scripts/export_corpus.py, so the suite stays runnable
+  without a CodeRoot database. When it skips, that means parity against
+  CodeRoot was NOT verified this run — not merely that an environment
+  variable was unset. A skipped run must never be read as a passing parity
+  result.
 
 * `test_harness_replays_a_self_generated_fixture` runs unconditionally
   against tests/fixtures/parity-sample/, which holds records this service
@@ -54,13 +80,33 @@ class _Fixed:
     def prior_assessment(self, subject): return None
 
 
-def _run_case(case: Path) -> None:
-    data = json.loads(case.read_text(encoding="utf-8"))
-    record = assess_handler(
+def _check_record(record: dict, expected: dict, label: str) -> None:
+    # content_fingerprint hashes only the deterministic classification (see
+    # module docstring) — a promotion can never move it, so this comparison
+    # is unconditional and is the real gate.
+    assert record["content_fingerprint"] == expected["content_fingerprint"]
+
+    # asset_types can legitimately differ from CodeRoot's recorded value by
+    # exactly the LLM-promoted types: this harness runs with llm_provider=
+    # none and cannot reproduce a citation-backed promotion. Compare against
+    # the deterministic portion only, and say so on failure.
+    promoted = set(expected.get("promoted_types") or [])
+    deterministic_expected = sorted(set(expected["asset_types"]) - promoted)
+    note = (f" ({len(promoted)} LLM-promoted type(s) excluded from this "
+             f"llm_provider=none comparison: {sorted(promoted)})" if promoted else "")
+    assert sorted(record["asset_types"]) == deterministic_expected, (
+        f"deterministic asset_types mismatch for {label}{note}")
+
+
+def _derive(data: dict) -> dict:
+    return assess_handler(
         _Fixed(data["snapshot"], data["metrics"]), NullCache(),
         Settings(assessor_api_token="x"), data["subject"])
-    assert record["content_fingerprint"] == data["expected"]["content_fingerprint"]
-    assert sorted(record["asset_types"]) == sorted(data["expected"]["asset_types"])
+
+
+def _run_case(case: Path) -> None:
+    data = json.loads(case.read_text(encoding="utf-8"))
+    _check_record(_derive(data), data["expected"], case.stem)
 
 
 # --- Real parity: this service's output vs. CodeRoot's recorded output. ----
@@ -110,3 +156,39 @@ def test_fixture_directory_is_not_empty():
     """Guards against the self-check silently asserting nothing because the
     fixtures directory was emptied or renamed."""
     assert _fixture_cases(), "tests/fixtures/parity-sample has no *.json cases"
+
+
+# --- Direct regression coverage for the fix-round-1 promoted-types bug -----
+# None of the self-generated fixtures above have a real promotion (there is
+# no LLM available to produce one here), so the two tests below simulate one
+# by editing `expected` in memory on top of a real derived record. They pin
+# the exact bug the live 130-repo run found: comparing the raw
+# `expected.asset_types` (fix round 0) fails on a promoted repo even though
+# the deterministic classifier agrees; the fix must both tolerate a declared
+# promotion and still catch a genuine mismatch.
+
+def test_promoted_types_are_excluded_from_the_comparison():
+    """If CodeRoot recorded an extra asset_type but named it in
+    `promoted_types`, the comparison must pass: that type exists only
+    because of an LLM citation this llm_provider=none harness cannot
+    reproduce."""
+    data = json.loads((_FIXTURES / "demo__mcp-server.json").read_text(encoding="utf-8"))
+    record = _derive(data)
+    assert record["asset_types"] == ["mcp_server"]  # sanity: matches the fixture as-is
+    synthetic_expected = {**data["expected"],
+                          "asset_types": sorted(data["expected"]["asset_types"] + ["agent"]),
+                          "promoted_types": ["agent"]}
+    _check_record(record, synthetic_expected, "synthetic-promotion")  # must not raise
+
+
+def test_an_unmarked_extra_type_still_fails_the_comparison():
+    """The promoted_types subtraction must not become a blanket pass: an
+    asset_type CodeRoot recorded WITHOUT naming it in promoted_types (i.e. a
+    genuine deterministic mismatch) must still fail."""
+    data = json.loads((_FIXTURES / "demo__mcp-server.json").read_text(encoding="utf-8"))
+    record = _derive(data)
+    synthetic_expected = {**data["expected"],
+                          "asset_types": sorted(data["expected"]["asset_types"] + ["agent"]),
+                          "promoted_types": []}  # NOT declared as promoted
+    with pytest.raises(AssertionError, match="deterministic asset_types mismatch"):
+        _check_record(record, synthetic_expected, "synthetic-missing-promotion-tag")

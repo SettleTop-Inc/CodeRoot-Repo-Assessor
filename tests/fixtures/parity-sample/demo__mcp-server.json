@@ -36,6 +36,7 @@
     "asset_types": [
       "mcp_server"
     ],
-    "content_fingerprint": "84314b3e7361d6ca5a9f041264781c546a9a377cb605e40f559a439c030c3a5c"
+    "content_fingerprint": "84314b3e7361d6ca5a9f041264781c546a9a377cb605e40f559a439c030c3a5c",
+    "promoted_types": []
   }
 }

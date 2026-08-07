@@ -17,8 +17,8 @@ _MCP = {"server.py": (
 
 
 class _Source:
-    def __init__(self, *, gone=False, empty=False):
-        self.gone, self.empty = gone, empty
+    def __init__(self, *, gone=False, empty=False, no_snapshot=False):
+        self.gone, self.empty, self.no_snapshot = gone, empty, no_snapshot
 
     def acquire(self, repo_url, *, prior):
         if self.gone:
@@ -27,6 +27,8 @@ class _Source:
                 "metadata": {}, "allowlist_version": 7}
 
     def snapshot(self, subject):
+        if self.no_snapshot:
+            return None
         return {"commit_sha": "abc123",
                 "metadata": {"description": None, "homepage": None,
                              "topics": [], "license_spdx": None},
@@ -68,8 +70,19 @@ def test_anonymous_mode_needs_no_bearer():
     assert c.post("/v1/assess", json=_BODY).status_code == 200
 
 
-def test_empty_snapshot_is_422_not_derivable_not_a_500():
+def test_empty_snapshot_derives_not_an_asset_not_422():
+    """Task 11 fix round 1: an empty-but-present `files` dict is a legitimate,
+    derivable input (CodeRoot's own pipeline reaches this state whenever
+    acquisition succeeds and finds nothing selectable) — it must not be
+    treated the same as a snapshot that could not be read at all."""
     c = _client(source=_Source(empty=True))
+    r = c.post("/v1/assess", json=_BODY, headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 200
+    assert r.json()["asset_types"] == []
+
+
+def test_no_snapshot_is_422_not_derivable_not_a_500():
+    c = _client(source=_Source(no_snapshot=True))
     r = c.post("/v1/assess", json=_BODY, headers={"Authorization": "Bearer tok"})
     assert r.status_code == 422 and r.json()["error"] == "not_derivable"
 

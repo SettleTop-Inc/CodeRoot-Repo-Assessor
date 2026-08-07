@@ -29,6 +29,7 @@
   "metrics": null,
   "expected": {
     "asset_types": [],
-    "content_fingerprint": "cc51fa8cf048c3c52805901de5d3e194f82be95ff218a6034dc47a7f41f6f3ca"
+    "content_fingerprint": "cc51fa8cf048c3c52805901de5d3e194f82be95ff218a6034dc47a7f41f6f3ca",
+    "promoted_types": []
   }
 }

@@ -27,10 +27,10 @@ _MCP = {"server.py": (
 
 
 class _Source:
-    # gone/empty mirror test_app_http.py's double exactly, so the same
-    # fixture shapes the same failure on both surfaces.
-    def __init__(self, *, gone=False, empty=False):
-        self.gone, self.empty = gone, empty
+    # gone/empty/no_snapshot mirror test_app_http.py's double exactly, so the
+    # same fixture shapes the same failure on both surfaces.
+    def __init__(self, *, gone=False, empty=False, no_snapshot=False):
+        self.gone, self.empty, self.no_snapshot = gone, empty, no_snapshot
 
     def acquire(self, repo_url, *, prior):
         if self.gone:
@@ -41,6 +41,8 @@ class _Source:
     def snapshot(self, subject):
         if self.gone:
             raise RepoGone("o/n")
+        if self.no_snapshot:
+            return None
         return {"commit_sha": "abc123",
                 "metadata": {"description": None, "homepage": None,
                              "topics": [], "license_spdx": None},
@@ -100,8 +102,21 @@ async def test_assess_tool_returns_the_same_record_as_the_http_surface():
 async def test_assess_repository_maps_not_derivable_to_the_http_body_shape():
     payload = await _call("assess_repository",
                           {"repo_url": "https://github.com/o/n", "subject_key": "rid-1"},
+                          source=_Source(no_snapshot=True))
+    assert payload == {"error": "not_derivable", "reason": "no snapshot available"}
+
+
+@pytest.mark.anyio
+async def test_assess_repository_derives_not_an_asset_for_empty_files_not_error():
+    """Task 11 fix round 1, mirrored on the MCP door: an empty-but-present
+    `files` dict must derive a normal record on this surface too, not just
+    the HTTP one — the whole point of this file is that the two doors cannot
+    drift."""
+    payload = await _call("assess_repository",
+                          {"repo_url": "https://github.com/o/n", "subject_key": "rid-1"},
                           source=_Source(empty=True))
-    assert payload == {"error": "not_derivable", "reason": "snapshot has no file bodies"}
+    assert "error" not in payload
+    assert payload["asset_types"] == []
 
 
 @pytest.mark.anyio
