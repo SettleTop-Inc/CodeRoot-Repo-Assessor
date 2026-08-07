@@ -102,3 +102,25 @@ def test_fingerprint_is_stable_across_two_identical_derives():
     a = assess_handler(_Source(_MCP), NullCache(), _S, _SUBJECT)
     b = assess_handler(_Source(_MCP), NullCache(), _S, _SUBJECT)
     assert a["content_fingerprint"] == b["content_fingerprint"]
+
+
+def test_metrics_license_and_releases_reach_assemble_build():
+    """Regression for handlers.py:32-36: `metrics()["license"]` must reach
+    assemble.build as fallback_license, and `metrics()["releases"]` as
+    `releases`. Every other test here uses a source whose metrics() returns
+    None, so mutating either key to a typo (e.g. "licence"/"release") left
+    the rest of the suite green — pin the wiring directly. With no
+    repo-object SPDX and no LICENSE file in the snapshot, license.detect()
+    only reaches a value via fallback_license, and versions.build() only
+    counts a release via `releases` — so both assertions are only reachable
+    through this exact pair of dict keys."""
+    class _WithMetrics(_Source):
+        def metrics(self, subject):
+            return {"license": "MIT",
+                    "releases": [{"tag": "v1.0.0", "name": "v1",
+                                 "published_at": "2026-01-01T00:00:00Z",
+                                 "is_prerelease": False}]}
+
+    r = assess_handler(_WithMetrics(_MCP), NullCache(), _S, _SUBJECT)
+    assert r["assessment"]["license"]["spdx"]["value"] == "MIT"
+    assert r["assessment"]["versions"]["release_count"]["value"] == 1
