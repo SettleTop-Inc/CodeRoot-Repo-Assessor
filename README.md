@@ -51,9 +51,11 @@ curl -s -X POST localhost:8081/v1/assess \
        "source":"direct"}'
 ```
 
-`GITHUB_TOKENS` (comma-separated PATs) is optional too but strongly recommended —
-`/v1/acquire` and `/v1/assess` both clone the target repository, and an
-unauthenticated `git fetch` is capped by GitHub's much lower anonymous rate limit.
+`GITHUB_TOKENS` (comma-separated PATs) is optional too but strongly recommended
+— it raises the GitHub REST API rate limit (60 → 5000/hr) that the repo-object
+and commit-SHA lookups run against. It has no effect on the git fetch itself:
+that runs deliberately hardened against credential injection (no credential
+helper, no askpass) and is always anonymous, token or not.
 
 ## MCP
 
@@ -114,9 +116,11 @@ fires one by itself.
   promotes a repo to "agent".
 - **mcp_server** — a Model Context Protocol server: an `@modelcontextprotocol/sdk`
   dependency, a Python `mcp` package dependency, an `mcp.json`/`server.json`
-  manifest, or a `smithery.yaml` `startCommand`. Weaker: prose declaring MCP
-  (README or repo description) together with a server-construction pattern in
-  source.
+  manifest, or a `smithery.yaml` `startCommand`. Weaker: README prose declaring
+  MCP, or a server-construction pattern in source — either alone is enough,
+  independently. The repo's declared topics/description come in only
+  afterward, to promote an existing weak match to strong; they don't trigger
+  one by themselves.
 - **skill** — the Anthropic Skills format: a `SKILL.md` with `name:` and
   `description:` YAML frontmatter, at the repo root or at `skills/<name>/SKILL.md`.
   Positional on purpose — an agent-host configuration directory
@@ -137,12 +141,14 @@ evidence that produced it), an **AssessedField** (LLM-derived, carrying a
 confidence and never touching classification on its own), or an explicit
 **known_unknown** naming why a value isn't there.
 
-A standalone deployment has no license/release metrics and no assessment
-history. There is no Aveloxis integration here — acquisition reads the target
-repository directly over git, so license detection falls back to matching the
-repository's own `LICENSE` text and, failing that, an honest `known_unknown`
-rather than a guess; release history and prior-assessment diffing are
-unavailable the same way and degrade to `known_unknowns` too.
+A standalone deployment has no release metrics and no assessment history —
+there is no Aveloxis integration here, so `metrics()` always returns `None`
+and both degrade to `known_unknowns`. License is different: every acquisition
+calls the GitHub REST API for the repo object regardless of Aveloxis, so when
+GitHub has already detected a license, its `license.spdx_id` is used directly;
+only when that's absent does detection fall back to matching the repository's
+own `LICENSE` text, and only when neither is available does it become an
+honest `known_unknown` rather than a guess.
 
 It ships with no model. `LLM_PROVIDER` defaults to `none`, and every field an
 LLM could help with — a business-domain guess, a coverage-probe reconciliation,
