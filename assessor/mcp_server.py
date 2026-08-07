@@ -12,7 +12,7 @@ from .handlers import acquire_handler, assess_handler
 from .ports.cache import CachePort, NullCache
 from .ports.source import Source
 from .versions import version_payload
-from .wiring import build_direct_source
+from .wiring import build_source
 
 
 def build_mcp(settings: Settings, source: Source, cache: CachePort) -> MCPServer:
@@ -75,10 +75,15 @@ def create_mcp() -> MCPServer:
     for the same reason as app.create_app(): importing this module must have
     no side effects, and get_settings() deliberately raises when auth is
     unconfigured (config.py's fail-closed validator). Shares
-    wiring.build_direct_source with the HTTP entrypoint so the real adapter
-    is built in exactly one place."""
+    wiring.build_source with the HTTP entrypoint, which selects DirectSource
+    or McpSource from settings.coderoot_mcp_url — so the two surfaces cannot
+    diverge on where their data comes from. (Previously called
+    build_direct_source directly, which meant a deployment configuring
+    CODEROOT_MCP_URL got McpSource on the HTTP surface but silently kept
+    performing live GitHub acquisitions on this one, with no `source`
+    parameter on assess_repository for a caller to even notice the gap.)"""
     s = get_settings()
-    return build_mcp(s, build_direct_source(s), NullCache())
+    return build_mcp(s, build_source(s), NullCache())
 
 
 def main() -> None:
