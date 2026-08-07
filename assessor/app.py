@@ -9,13 +9,13 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .assessment.git_fetch import GitContentFetcher
 from .config import Settings, get_settings
 from .errors import NotDerivable, RepoGone
 from .handlers import acquire_handler, assess_handler
 from .ports.cache import CachePort, NullCache
-from .ports.source import DirectSource, Source
+from .ports.source import Source
 from .versions import version_payload
+from .wiring import build_direct_source
 
 
 class SubjectIn(BaseModel):
@@ -147,10 +147,4 @@ def create_app() -> FastAPI:
     this module must have no side effects, and get_settings() deliberately raises
     when auth is unconfigured (config.py's fail-closed validator)."""
     s = get_settings()
-    http = httpx.Client(timeout=s.acquire_timeout_s,
-                        headers={"Authorization": f"Bearer {s.github_token_list[0]}"}
-                        if s.github_token_list else {})
-    fetcher = GitContentFetcher(s.acquire_cache_dir, blob_limit=s.blob_limit_bytes,
-                                timeout_s=s.acquire_timeout_s,
-                                max_entries=s.max_tree_entries)
-    return build_app(s, DirectSource(s, http, fetcher), NullCache())
+    return build_app(s, build_direct_source(s), NullCache())
