@@ -13,17 +13,41 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install uv
-      - run: uv pip install --system -e ".[dev]"
-      - run: pytest -v
+      # --frozen makes uv.lock load-bearing: a floor/lock divergence (pyproject
+      # says one thing, the lock resolves another) fails CI instead of going
+      # unnoticed, which is exactly how a stale mcp>=1.2 floor hid previously.
+      - run: uv sync --frozen --all-extras
+      - run: uv run pytest -v
 
   image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t coderoot-repo-assessor:ci .
-      # Fail-closed must hold in the built image, not only in unit tests.
+      # Fail-closed must hold in the built image, not only in unit tests. Bounded
+      # and asserted on the message, not just the exit code: uvicorn is a
+      # long-lived foreground server, so if fail-closed ever regressed and the
+      # container started, a bare `docker run` (no -d) would never return —
+      # the step would eventually fail via the job's multi-hour default
+      # timeout instead of failing fast with a legible reason. This must
+      # distinguish three outcomes: refused for the right reason (pass),
+      # started successfully (fail fast), still running at the timeout (fail
+      # fast) — asserting on the exit code alone would let a container that
+      # exits 1 for an unrelated reason read as success.
       - name: assert the image refuses to start unauthenticated
         run: |
-          if docker run --rm coderoot-repo-assessor:ci; then
-            echo "image started without auth configured" && exit 1
+          set +e
+          timeout 30s docker run --rm coderoot-repo-assessor:ci > out.log 2>&1
+          code=$?
+          set -e
+          if [ "$code" -eq 124 ]; then
+            echo "FAIL: image was still running after 30s — it started without auth configured"
+            cat out.log; exit 1
           fi
+          if [ "$code" -eq 0 ]; then
+            echo "FAIL: image started successfully with no auth configured"
+            cat out.log; exit 1
+          fi
+          grep -q "refusing to start unauthenticated" out.log || {
+            echo "FAIL: exited non-zero but not for the fail-closed reason"; cat out.log; exit 1; }
+          echo "OK: refused to start, exit=$code"
