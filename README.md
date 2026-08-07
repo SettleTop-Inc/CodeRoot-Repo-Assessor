@@ -68,10 +68,24 @@ tools:
 | `acquire_repository(repo_url)` | Fetch a repository's file snapshot at its current HEAD, with the marker scan and path inventory the classifier uses. Returns the pinned commit SHA alongside the selected file bodies. |
 | `assessor_version()` | Report the classification registry, selection allowlist and marker vocabulary versions. A change in any of them means previously derived records are stale and should be re-derived. |
 
-`assess_repository` and `acquire_repository` mirror the HTTP surface's
-`/v1/assess` and `/v1/acquire` exactly — same handlers, same typed-error
-mapping — so a caller gets identical behavior regardless of which surface it
-used.
+`assess_repository` and `acquire_repository` call the same handlers as the
+HTTP surface's `/v1/assess` and `/v1/acquire` and map the same typed errors
+(`NotDerivable`, `RepoGone`, invalid-URL `ValueError`) to the same body
+shape, so a caller sees identical failure behavior regardless of which
+surface it used. The request shapes are not identical, though: incremental
+re-acquire via `prior` (skip the git fetch entirely when the caller's last
+known commit SHA and allowlist version still match) is HTTP-only today —
+`acquire_repository` always calls with `prior=None`, so `status:"unchanged"`
+is reachable over `/v1/acquire` but not yet from this MCP tool.
+
+Run the MCP server directly with its packaged stdio entrypoint:
+
+```bash
+coderoot-repo-assessor-mcp
+```
+
+Point any MCP client (Claude Desktop, an IDE plugin, etc.) at this command
+as a subprocess and it speaks MCP over that process's stdin/stdout.
 
 ## Configuration
 
@@ -142,8 +156,14 @@ confidence and never touching classification on its own), or an explicit
 **known_unknown** naming why a value isn't there.
 
 A standalone deployment has no release metrics and no assessment history —
-there is no Aveloxis integration here, so `metrics()` always returns `None`
-and both degrade to `known_unknowns`. License is different: every acquisition
+there is no Aveloxis integration here, so `metrics()` always returns `None`.
+Assessment history and the `latest_release` field degrade to
+`known_unknowns` accordingly, but `release_count` does not: with no releases
+collected, it is still reported as a **Fact of `0`** rather than a
+`known_unknown` — the field states "zero releases", without distinguishing
+"GitHub confirmed zero" from "GitHub was never asked" (this is a known,
+narrow gap in that one field, not the general behavior). License is
+different: every acquisition
 calls the GitHub REST API for the repo object regardless of Aveloxis, so when
 GitHub has already detected a license, its `license.spdx_id` is used directly;
 only when that's absent does detection fall back to matching the repository's
