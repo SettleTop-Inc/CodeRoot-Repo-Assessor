@@ -2,6 +2,8 @@
 errors to status codes. All judgment lives in handlers.py."""
 from __future__ import annotations
 
+import secrets
+
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
@@ -40,13 +42,23 @@ class AssessIn(BaseModel):
 
 
 def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
-    app = FastAPI(title="CodeRoot Repo Assessor")
+    # docs_url/redoc_url/openapi_url disabled: the default /docs, /redoc and
+    # /openapi.json are unauthenticated and would disclose the full request/
+    # response schema — including /v1/acquire's, which clones a caller-supplied
+    # url using the operator's GitHub tokens (see config.py's fail-closed
+    # validator comment). No test needs them.
+    app = FastAPI(title="CodeRoot Repo Assessor",
+                 docs_url=None, redoc_url=None, openapi_url=None)
 
     def auth(authorization: str | None = Header(default=None)) -> None:
         if settings.assessor_allow_anonymous:
             return
         expected = f"Bearer {settings.assessor_api_token}"
-        if authorization != expected:
+        # Guard the None case before compare_digest, which requires str/bytes
+        # on both sides and would raise TypeError on a missing header instead
+        # of the intended 401. Constant-time comparison so a wrong bearer
+        # can't be distinguished by timing from a near-miss.
+        if authorization is None or not secrets.compare_digest(authorization, expected):
             raise HTTPException(status_code=401, detail="unauthorized")
 
     @app.get("/healthz")
@@ -72,6 +84,16 @@ def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
 
     @app.post("/v1/acquire", dependencies=[Depends(auth)])
     def acquire(body: AcquireIn):
+        # ref-pinning is not implemented: DirectSource always resolves HEAD.
+        # Silently ignoring a caller's `ref` would clone a different commit
+        # than the one they asked for, so refuse explicitly rather than
+        # quietly substituting HEAD. The field stays on the model so the
+        # request contract shape is stable for when ref-pinning lands.
+        if body.ref is not None:
+            return JSONResponse(status_code=400,
+                                content={"error": "unsupported_field", "field": "ref",
+                                         "reason": "ref pinning is not supported by "
+                                                   "this deployment"})
         try:
             return acquire_handler(source, body.repo_url,
                                    body.prior.model_dump() if body.prior else None)
@@ -83,6 +105,17 @@ def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
 
     @app.post("/v1/assess", dependencies=[Depends(auth)])
     def assess(body: AssessIn):
+        # McpSource does not exist yet (a later, separate plan). Silently
+        # falling back to DirectSource for `source: "mcp"` would perform a
+        # live GitHub acquisition instead of the zero-cost re-derivation the
+        # caller asked for, so refuse explicitly. The field stays on the
+        # model so the request contract shape is stable for when McpSource
+        # lands.
+        if body.source != "direct":
+            return JSONResponse(status_code=400,
+                                content={"error": "unsupported_field", "field": "source",
+                                         "reason": f"source {body.source!r} is not "
+                                                   "supported by this deployment"})
         try:
             return assess_handler(source, cache, settings, body.subject.model_dump())
         except NotDerivable as exc:
@@ -90,6 +123,14 @@ def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
                                 content={"error": "not_derivable", "reason": str(exc)})
         except RepoGone:
             return JSONResponse(status_code=410, content={"error": "repo_gone"})
+        except ValueError as exc:
+            # Same class of bug the /v1/acquire branch above guards: a
+            # malformed repo_url reaches DirectSource._split() via
+            # source.snapshot() -> acquire() before any network call, and
+            # without this handler it was an unhandled 500 — exactly what the
+            # typed error taxonomy exists to prevent.
+            return JSONResponse(status_code=400,
+                                content={"error": "invalid_repo_url", "reason": str(exc)})
 
     return app
 

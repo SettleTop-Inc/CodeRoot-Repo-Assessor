@@ -4,6 +4,7 @@ from assessor.app import build_app
 from assessor.config import Settings
 from assessor.errors import NotDerivable, RepoGone
 from assessor.ports.cache import NullCache
+from assessor.ports.source import DirectSource
 
 _MCP = {"server.py": (
     "from mcp.server.fastmcp import FastMCP\n"
@@ -94,3 +95,44 @@ def test_healthz_needs_no_auth():
 def test_readyz_reports_llm_off_without_failing():
     r = _client().get("/readyz")
     assert r.status_code == 200 and r.json()["llm"] == "off"
+
+
+def test_assess_with_malformed_repo_url_via_real_direct_source_is_400_not_500():
+    # Regression for fix round 1: the `_Source` double above never validates
+    # repo_url, so it cannot exercise this path. DirectSource._split() raises
+    # a plain ValueError for a malformed url, BEFORE any network/git call —
+    # http and fetcher are never touched, so None stand-ins are safe here.
+    s = Settings(assessor_api_token="tok")
+    real_source = DirectSource(s, None, None)
+    c = TestClient(build_app(s, real_source, NullCache()))
+    body = {"subject": {"repo_url": "https://github.com/../../etc/passwd",
+                        "subject_key": "rid-1", "commit_sha": "", "subdir": ""},
+            "source": "direct"}
+    r = c.post("/v1/assess", json=body, headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 400
+    assert r.json()["error"] == "invalid_repo_url"
+
+
+def test_acquire_rejects_a_ref_as_unsupported():
+    r = _client().post("/v1/acquire",
+                       json={"repo_url": "https://github.com/o/n", "ref": "v1.2.3",
+                             "prior": None},
+                       headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 400
+    body = r.json()
+    assert body["error"] == "unsupported_field" and body["field"] == "ref"
+
+
+def test_assess_rejects_a_non_direct_source_as_unsupported():
+    r = _client().post("/v1/assess", json={**_BODY, "source": "mcp"},
+                       headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 400
+    body = r.json()
+    assert body["error"] == "unsupported_field" and body["field"] == "source"
+
+
+def test_openapi_and_docs_are_not_served():
+    c = _client()
+    assert c.get("/openapi.json").status_code == 404
+    assert c.get("/docs").status_code == 404
+    assert c.get("/redoc").status_code == 404
