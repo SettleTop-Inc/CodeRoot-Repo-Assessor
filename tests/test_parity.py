@@ -2,7 +2,9 @@
 """Behaviour preservation is the acceptance gate for the extraction.
 
 WHAT THIS HARNESS ACTUALLY MEASURES, WITH THE LLM OFF (`llm_provider="none"`,
-the default): `content_fingerprint` is compared UNCONDITIONALLY, for every
+pinned via the shared `_S` from conftest.py — not left to the field default,
+which a stray .env or exported LLM_PROVIDER could silently override):
+`content_fingerprint` is compared UNCONDITIONALLY, for every
 case, because `assemble.build` computes it from `det_asset_types` — the
 deterministic classification only — before any citation-backed promotion is
 applied (see assemble.py's PAYLOAD SPLIT comment). Promotion can never move
@@ -27,7 +29,8 @@ parity for the deterministic path only. It does NOT independently verify that
 CodeRoot's own promotions were sound — only that the deterministic classifier
 this service extracted still agrees with CodeRoot's deterministic classifier.
 
-Two test functions live here, and they prove different things:
+Two test functions carry the actual comparisons, and they prove different
+things (the rest of the file is regression coverage and guards for both):
 
 * `test_record_matches_coderoot` is the real parity check, against real
   CodeRoot-recorded data. It is skipped unless ASSESSOR_CORPUS_DIR points at
@@ -35,7 +38,10 @@ Two test functions live here, and they prove different things:
   without a CodeRoot database. When it skips, that means parity against
   CodeRoot was NOT verified this run — not merely that an environment
   variable was unset. A skipped run must never be read as a passing parity
-  result.
+  result. `test_corpus_directory_is_not_empty_when_configured` guards the
+  adjacent failure mode: ASSESSOR_CORPUS_DIR set but pointing at nothing,
+  which would otherwise look like the same harmless skip instead of the
+  operator error it is.
 
 * `test_harness_replays_a_self_generated_fixture` runs unconditionally
   against tests/fixtures/parity-sample/, which holds records this service
@@ -52,7 +58,7 @@ from pathlib import Path
 
 import pytest
 
-from assessor.config import Settings
+from conftest import _S
 from assessor.handlers import assess_handler
 from assessor.ports.cache import NullCache
 
@@ -99,9 +105,16 @@ def _check_record(record: dict, expected: dict, label: str) -> None:
 
 
 def _derive(data: dict) -> dict:
+    # `_S` (tests/conftest.py) pins llm_provider="none" explicitly rather than
+    # relying on the field default: Settings reads the real environment and
+    # .env (assessor/config.py), so a stray .env or an exported LLM_PROVIDER
+    # would otherwise silently flip a corpus run LLM-on — firing live HTTP
+    # calls across the whole corpus and producing false failures on any repo
+    # the local model happened to promote. Using the one shared, already-
+    # audited definition instead of a second ad hoc Settings(...) here means
+    # there is exactly one place this precondition can drift from true.
     return assess_handler(
-        _Fixed(data["snapshot"], data["metrics"]), NullCache(),
-        Settings(assessor_api_token="x"), data["subject"])
+        _Fixed(data["snapshot"], data["metrics"]), NullCache(), _S, data["subject"])
 
 
 def _run_case(case: Path) -> None:
@@ -132,6 +145,25 @@ _skip_without_corpus = pytest.mark.skipif(not _DIR, reason=_SKIP_REASON)
 @pytest.mark.parametrize("case", _corpus_cases(), ids=lambda p: p.stem)
 def test_record_matches_coderoot(case):
     _run_case(case)
+
+
+def test_corpus_directory_is_not_empty_when_configured():
+    """Mirrors test_fixture_directory_is_not_empty, for the directory that
+    matters more: if ASSESSOR_CORPUS_DIR is set but misspelled or points at
+    an empty directory, `_corpus_cases()` silently returns [] and pytest's
+    default empty-parametrize skip reports a generic "empty parameter set"
+    reason — indistinguishable, without -rs, from `_SKIP_REASON`'s honest
+    "no corpus configured" skip. An operator who typos the acceptance-gate
+    path would see "1 skipped" either way and have no signal that their
+    corpus was never read. This test fails loudly instead, naming the
+    configured path, whenever ASSESSOR_CORPUS_DIR is set."""
+    if not _DIR:
+        pytest.skip("ASSESSOR_CORPUS_DIR is unset — nothing to check here; "
+                    "see test_record_matches_coderoot's skip reason for what "
+                    "an unset corpus dir means for parity verification.")
+    assert _corpus_cases(), (
+        f"ASSESSOR_CORPUS_DIR={_DIR!r} is set but contains no *.json files — "
+        "check the path for a typo, or re-run scripts/export_corpus.py")
 
 
 # --- Harness self-check: proves the plumbing, not parity. ------------------

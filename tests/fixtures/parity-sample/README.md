@@ -27,3 +27,19 @@ sides of every comparison here came from this service. Real parity requires
 a corpus exported from CodeRoot's own database via `scripts/export_corpus.py`
 and pointed to via `ASSESSOR_CORPUS_DIR` — see `test_record_matches_coderoot`
 in `tests/test_parity.py`.
+
+## Regenerating these files
+
+Run `scripts/gen_parity_fixtures.py` — it runs in this repo's own venv (no
+CodeRoot database or `sqlalchemy` needed, unlike `export_corpus.py`) and
+overwrites all three files with fresh output:
+
+```
+.venv/Scripts/python.exe scripts/gen_parity_fixtures.py
+```
+
+Do this whenever something could move `content_fingerprint` for these
+synthetic cases — most notably a `REGISTRY_VERSION` bump
+(`assessor/assessment/registry.py`) — so the fixtures stop pinning a stale
+fingerprint. `git diff tests/fixtures/parity-sample/` afterward should show
+only the values a real behaviour change actually moved.
