@@ -7,9 +7,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 RUN pip install --no-cache-dir uv
 
 WORKDIR /app
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 COPY assessor ./assessor
-RUN uv pip install --system --no-cache .
+# --locked (not --frozen) fails the build if uv.lock has drifted from
+# pyproject.toml, matching CI's `uv sync --locked` gate (ci.yml) so the graph
+# CI validates and the graph that ships are the same. Exported to a
+# requirements file and installed with `uv pip install --system` rather than
+# `uv sync` so the image keeps its existing no-venv layout (global
+# site-packages, CMD invokes `uvicorn` directly) instead of switching to a
+# project-venv one. `--no-emit-project` + a separate `--no-deps .` install:
+# the exported file pins every dependency at its exact locked version, and
+# installing the local package with --no-deps afterward can't reintroduce
+# unpinned resolution for its own dependencies.
+RUN uv export --locked --no-dev --no-hashes --no-emit-project -o requirements.txt \
+    && uv pip install --system --no-cache -r requirements.txt \
+    && uv pip install --system --no-cache --no-deps .
 
 # Non-root so a pod securityContext can enforce runAsNonRoot.
 RUN useradd --uid 1000 --create-home --shell /bin/bash app && chown -R app:app /app
