@@ -138,6 +138,92 @@ def test_fetcher_repo_id_satisfies_the_real_validator(monkeypatch):
     assert _validate_repo_key(captured["repo_id"]) == captured["repo_id"]
 
 
+_EXPECTED_REPO_META_KEYS = {
+    "default_branch", "description", "homepage", "topics", "license_spdx",
+    "repo_created_at", "repo_updated_at", "repo_pushed_at", "repo_fork",
+    "repo_parent_full_name", "repo_source_full_name", "repo_owner_login",
+    "repo_owner_type",
+}
+
+
+def test_repo_meta_carries_every_column_coderoot_persists():
+    """CodeRoot's repo_acquisition stores 13 fields from the GitHub repo object
+    and creation_info.py — the live marketplace feed — reads 8 of them. A
+    narrower payload nulls them out silently."""
+    from assessor.ports.source import _repo_meta
+    repo_obj = {
+        "default_branch": "main", "description": "d", "homepage": "h",
+        "topics": ["a"], "license": {"spdx_id": "MIT"},
+        "created_at": "2020-01-01T00:00:00Z", "updated_at": "2021-01-01T00:00:00Z",
+        "pushed_at": "2022-01-01T00:00:00Z", "fork": True,
+        "parent": {"full_name": "p/p"}, "source": {"full_name": "s/s"},
+        "owner": {"login": "o", "type": "Organization"},
+    }
+    assert _repo_meta(repo_obj) == {
+        "default_branch": "main", "description": "d", "homepage": "h",
+        "topics": ["a"], "license_spdx": "MIT",
+        "repo_created_at": "2020-01-01T00:00:00Z",
+        "repo_updated_at": "2021-01-01T00:00:00Z",
+        "repo_pushed_at": "2022-01-01T00:00:00Z",
+        "repo_fork": True, "repo_parent_full_name": "p/p",
+        "repo_source_full_name": "s/s",
+        "repo_owner_login": "o", "repo_owner_type": "Organization"}
+
+
+def test_absent_fields_stay_none_never_guessed():
+    """NULL means 'not acquired'. Coercing an absent `fork` to False would tell
+    creation_info.py the repo is confirmed-not-a-fork (creation_info.py:14)."""
+    from assessor.ports.source import _repo_meta
+
+    m = _repo_meta({})
+    assert m["repo_fork"] is None
+    assert m["repo_parent_full_name"] is None
+    assert m["repo_source_full_name"] is None
+    assert m["repo_owner_login"] is None
+    assert m["repo_owner_type"] is None
+    assert m["license_spdx"] is None
+    assert m["topics"] == []
+
+
+def test_noassertion_license_is_normalized_to_none():
+    """Matches CodeRoot's acquire.py:49 — GitHub returns NOASSERTION for
+    unrecognized licences and storing that string would be a false positive."""
+    from assessor.ports.source import _repo_meta
+
+    assert _repo_meta({"license": {"spdx_id": "NOASSERTION"}})["license_spdx"] is None
+    assert _repo_meta({"license": {"spdx_id": ""}})["license_spdx"] is None
+
+
+def test_acquire_result_carries_repo_meta_on_both_branches(monkeypatch):
+    """`unchanged` (SHA reuse) must carry refreshed metadata too — spec §5.1:
+    Bucket B is refreshed on every run including the reuse path."""
+    repo_obj = {
+        "default_branch": "main", "description": "d", "homepage": "h",
+        "topics": ["a"], "license": {"spdx_id": "MIT"},
+        "created_at": "2020-01-01T00:00:00Z", "updated_at": "2021-01-01T00:00:00Z",
+        "pushed_at": "2022-01-01T00:00:00Z", "fork": True,
+        "parent": {"full_name": "p/p"}, "source": {"full_name": "s/s"},
+        "owner": {"login": "o", "type": "Organization"},
+    }
+    http = _Http(sha="abc123", repo_obj=repo_obj)
+
+    # acquired branch: no prior, so DirectSource clones.
+    src = _direct(http, _Fetcher(), monkeypatch)
+    r = src.acquire("https://github.com/o/n", prior=None)
+    assert r["status"] == "acquired"
+    assert set(r["repo_meta"]) == _EXPECTED_REPO_META_KEYS
+    assert r["repo_meta"]["repo_owner_login"] == "o"
+
+    # unchanged branch: matching prior short-circuits the clone, metadata
+    # (including repo_meta) is still refreshed from resolve_head.
+    src2 = _direct(http, _Fetcher(), monkeypatch)
+    r2 = src2.acquire("https://github.com/o/n",
+                       prior={"commit_sha": "abc123", "allowlist_version": 7})
+    assert r2["status"] == "unchanged"
+    assert set(r2["repo_meta"]) == _EXPECTED_REPO_META_KEYS
+    assert r2["repo_meta"]["repo_owner_login"] == "o"
+
+
 def test_snapshot_returns_the_acquired_snapshot(monkeypatch):
     """snapshot() ignores subject["commit_sha"] and always re-resolves HEAD via
     prior=None — this is deliberate (Task 9's MCP tool passes commit_sha: "" for

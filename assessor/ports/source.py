@@ -42,6 +42,7 @@ class AcquireResult(TypedDict):
     snapshot: Snapshot | None
     commit_sha: str
     metadata: dict
+    repo_meta: dict
     allowlist_version: int
 
 
@@ -88,6 +89,46 @@ def _bucket_b(repo_obj: dict) -> dict:
             "license_spdx": spdx}
 
 
+def _repo_meta(repo_obj: dict) -> dict:
+    """The FULL metadata CodeRoot persists to `repo_acquisition`, which is a
+    superset of `_bucket_b`'s four assess-side fields.
+
+    Kept separate from `_bucket_b` rather than widening it: `assemble.build`
+    consumes bucket_b and must not start seeing fields it has no use for, and
+    one key name meaning two shapes is exactly the confusion this split avoids.
+
+    An absent field stays None — NEVER a guessed False or "". `creation_info.py`
+    reads `repo_fork IS NULL` as "not acquired", so coercing an absent `fork` to
+    False would assert the repo is confirmed-not-a-fork on no evidence. Both
+    fork pointers are carried: `parent` is what this was forked from, `source`
+    is the fork-network root, and only the root names the creator.
+    """
+    lic = repo_obj.get("license") or {}
+    spdx = lic.get("spdx_id") if isinstance(lic, dict) else None
+    if spdx in ("NOASSERTION", ""):
+        spdx = None
+    par = repo_obj.get("parent") or {}
+    src = repo_obj.get("source") or {}
+    own = repo_obj.get("owner") or {}
+    fork = repo_obj.get("fork")
+    topics = repo_obj.get("topics")
+    return {
+        "default_branch": repo_obj.get("default_branch"),
+        "description": repo_obj.get("description"),
+        "homepage": repo_obj.get("homepage"),
+        "topics": topics if isinstance(topics, list) else [],
+        "license_spdx": spdx,
+        "repo_created_at": repo_obj.get("created_at"),
+        "repo_updated_at": repo_obj.get("updated_at"),
+        "repo_pushed_at": repo_obj.get("pushed_at"),
+        "repo_fork": bool(fork) if fork is not None else None,
+        "repo_parent_full_name": par.get("full_name") if isinstance(par, dict) else None,
+        "repo_source_full_name": src.get("full_name") if isinstance(src, dict) else None,
+        "repo_owner_login": own.get("login") if isinstance(own, dict) else None,
+        "repo_owner_type": own.get("type") if isinstance(own, dict) else None,
+    }
+
+
 class DirectSource:
     def __init__(self, settings, http, fetcher) -> None:
         self.settings, self.http, self.fetcher = settings, http, fetcher
@@ -99,6 +140,7 @@ class DirectSource:
         except content_mod.RepoGone as exc:
             raise RepoGone(str(exc)) from exc
         meta = _bucket_b(repo_obj)
+        repo_meta = _repo_meta(repo_obj)
         alv = content_mod.ALLOWLIST_VERSION
         # SHA reuse: the caller already holds this snapshot and the selection
         # allowlist has not widened, so there is nothing to re-read. Metadata is
@@ -106,7 +148,8 @@ class DirectSource:
         if (prior is not None and prior.get("commit_sha") == sha
                 and prior.get("allowlist_version") == alv):
             return {"status": "unchanged", "snapshot": None, "commit_sha": sha,
-                    "metadata": meta, "allowlist_version": alv}
+                    "metadata": meta, "repo_meta": repo_meta,
+                    "allowlist_version": alv}
         clone_url = f"https://github.com/{owner}/{name}.git"
         # GitContentFetcher's repo_id must satisfy _REPO_KEY_RE (hex only — it was
         # a database UUID in CodeRoot and is used as a bare-repo directory name),
@@ -116,7 +159,7 @@ class DirectSource:
         repo_key = hashlib.sha256(f"{owner}/{name}".encode()).hexdigest()
         files, paths, capped, hits = self.fetcher.fetch(clone_url, repo_key, sha)
         return {"status": "acquired", "commit_sha": sha, "metadata": meta,
-                "allowlist_version": alv,
+                "repo_meta": repo_meta, "allowlist_version": alv,
                 "snapshot": {"commit_sha": sha, "metadata": meta,
                              "tree_paths": tuple(paths), "tree_capped": capped,
                              "marker_hits": tuple(hits), "files": files,
