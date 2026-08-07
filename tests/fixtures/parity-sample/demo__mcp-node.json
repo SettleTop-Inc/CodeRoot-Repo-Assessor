@@ -1,0 +1,40 @@
+{
+  "subject": {
+    "repo_url": "https://github.com/demo/mcp-node",
+    "subject_key": "fixture-3",
+    "commit_sha": "ccc333",
+    "subdir": ""
+  },
+  "snapshot": {
+    "commit_sha": "ccc333",
+    "metadata": {
+      "description": null,
+      "homepage": "https://example.com",
+      "topics": [
+        "mcp",
+        "server"
+      ],
+      "license_spdx": null
+    },
+    "tree_paths": [
+      "index.ts",
+      "package.json"
+    ],
+    "tree_capped": false,
+    "marker_hits": [],
+    "files": {
+      "index.ts": "import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';\nconst server = new McpServer({ name: 'demo', version: '1.0.0' });\nserver.tool('add', { a: 'number', b: 'number' }, async ({a, b}) => ({a: a+b}));\n",
+      "package.json": "{\"name\": \"mcp-node\", \"version\": \"1.0.0\"}\n"
+    },
+    "source_coverage_capped": false,
+    "allowlist_version": 7
+  },
+  "metrics": null,
+  "expected": {
+    "asset_types": [
+      "mcp_server"
+    ],
+    "content_fingerprint": "756a953f673b171d40b4731b8df5757147077240fc1968c40f38738189d3d0e9",
+    "promoted_types": []
+  }
+}
