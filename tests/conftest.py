@@ -1,3 +1,5 @@
+import pytest
+
 from assessor.config import Settings
 
 # Shared LLM-off Settings for tests that reach assemble.build/purpose.extract/
@@ -7,3 +9,8 @@ from assessor.config import Settings
 # LLM_PROVIDER/LLM_BASE_URL/LLM_MODEL would otherwise flip these tests LLM-on
 # and let them attempt real HTTP calls.
 _S = Settings(assessor_api_token="x", llm_provider="none")
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
