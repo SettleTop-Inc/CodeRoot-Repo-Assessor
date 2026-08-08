@@ -1,0 +1,109 @@
+{
+  "_comment": [
+    "Shared drift vectors for the dual-homed llm.prompt_hash (the cross-service",
+    "cache key). This file is byte-identical in CodeRoot-OpenSource and",
+    "CodeRoot-Repo-Assessor; both suites assert it, so a divergent copy fails",
+    "loudly instead of producing a permanent, silent cache-key mismatch between",
+    "the two services.",
+    "",
+    "DERIVED BY EXECUTION: every `sha256` below was produced by calling the real",
+    "`prompt_hash(system, user, schema_name)` in CodeRoot's",
+    "coderoot_oss/llm/cache.py. Two of them -- 'separator_pair_a' and",
+    "'order_asymmetry' -- were additionally cross-checked BY HAND against",
+    "System.Security.Cryptography.SHA256 (.NET, not Python/hashlib) over a",
+    "manually constructed byte string following the documented layout",
+    "`f\"{schema_name}\\x1f{system}\\x1f{user}\"`, so this fixture pins the",
+    "algorithm the docstring describes, not merely whatever the code happened",
+    "to emit.",
+    "",
+    "What each case guards against:",
+    "- separator_pair_a / separator_pair_b: without the \\x1f separator,",
+    "  'ab'+'c' and 'a'+'bc' concatenate to the same string ('sabc' after the",
+    "  schema_name prefix), so a refactor that drops or changes the separator",
+    "  collapses these two DIFFERENT (system, user) pairs onto the SAME hash.",
+    "  Their recorded digests must differ.",
+    "- order_asymmetry: the function signature is",
+    "  `prompt_hash(system, user, schema_name)` but the interpolation order is",
+    "  `schema_name, system, user` -- schema_name comes FIRST in the string even",
+    "  though it is the LAST argument. Three distinct values (alpha/beta/gamma)",
+    "  make a refactor that interpolates in argument order instead produce a",
+    "  different, non-matching digest.",
+    "- empty_* : boundary behaviour when one or more fields are the empty string.",
+    "- non_ascii: UTF-8 encoding correctness for non-Latin scripts, accents and",
+    "  an emoji (astral-plane codepoint).",
+    "- control_and_quote_chars: embedded quotes, newlines and a tab must not be",
+    "  escaped/altered before hashing."
+  ],
+  "cases": [
+    {
+      "name": "basic_ascii",
+      "schema_name": "mcp_server",
+      "system": "You are an assessor.",
+      "user": "Classify this repository.",
+      "sha256": "df80cfd305b4a7ef7acd10b98c4807bf707dd65afaa198b410e495a8e0f709d2"
+    },
+    {
+      "name": "empty_all",
+      "schema_name": "",
+      "system": "",
+      "user": "",
+      "sha256": "b8c9e440ead3ddaccf7cc7e879d512a263272270df2d5504c0c3d1f85d16f9d9"
+    },
+    {
+      "name": "empty_system_and_user",
+      "schema_name": "schema",
+      "system": "",
+      "user": "",
+      "sha256": "e0b434d7ae37f59595993c01f666a54d4014d63c1de0a1f3fa82b2cbb0278c5d"
+    },
+    {
+      "name": "empty_user_only",
+      "schema_name": "schema",
+      "system": "sys",
+      "user": "",
+      "sha256": "4976e21bb9ba80edc6aef52460d0ef41da37c00b0472fbd902277355c75c5413"
+    },
+    {
+      "name": "empty_system_only",
+      "schema_name": "schema",
+      "system": "",
+      "user": "usr",
+      "sha256": "492402e3f9e8f028f804a9fdb84cd86cb4cd387c6ca47bd0070553c6fd59940c"
+    },
+    {
+      "name": "separator_pair_a",
+      "schema_name": "s",
+      "system": "ab",
+      "user": "c",
+      "sha256": "80af15667134d0190f6fa4801c64a5d4dc95cc4cdcff0c8e73bfeee1a8d2d551"
+    },
+    {
+      "name": "separator_pair_b",
+      "schema_name": "s",
+      "system": "a",
+      "user": "bc",
+      "sha256": "ea8dde9105358881f5fc96bc3557cc3c6a4fc73c8e88652cd01e0f7b33f4ceac"
+    },
+    {
+      "name": "order_asymmetry",
+      "schema_name": "gamma",
+      "system": "alpha",
+      "user": "beta",
+      "sha256": "fe558319b55eaecdc1545b8edc5b88f62538817dc375b19d483f47fef3465eda"
+    },
+    {
+      "name": "non_ascii",
+      "schema_name": "skill/agent-Ω",
+      "system": "Ünïcödé prömpt with 日本語 and emoji 🚀",
+      "user": "response café façade Σ naïve",
+      "sha256": "e1d55c3759a102f8266f119e790a784bb5c4105f15d239622567d86b9acd1a57"
+    },
+    {
+      "name": "control_and_quote_chars",
+      "schema_name": "quote\"schema",
+      "system": "He said \"hi\"\nnewline",
+      "user": "line1\nline2\ttab",
+      "sha256": "7c35dd7a872eca5765c1c7e46263a504ac5caa41b9bbc04f964fe3482a840c64"
+    }
+  ]
+}
