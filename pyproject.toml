@@ -2,6 +2,7 @@
 name = "coderoot-repo-assessor"
 version = "0.1.0"
 description = "Classify a source repository as an agent, MCP server, skill or prompt — with evidence."
+license = "GPL-3.0-or-later"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

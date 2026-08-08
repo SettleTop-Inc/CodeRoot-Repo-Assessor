@@ -176,3 +176,12 @@ a citation-backed promotion of a bespoke agent that no framework marker caught â
 simply does not run without one configured, and reports as absent rather than
 fabricated. The operator supplies their own OpenAI-compatible endpoint to turn
 those on.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).
+
+This is a judgment service that reads other people's repositories and publishes
+verdicts about them. Copyleft is deliberate: a modified assessor that classifies
+differently should not be able to present itself as this one without its changes
+being available to the people whose repositories it is judging.
