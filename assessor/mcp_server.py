@@ -9,10 +9,10 @@ from mcp.server.mcpserver import MCPServer
 from .config import Settings, get_settings
 from .errors import NotDerivable, RepoGone
 from .handlers import acquire_handler, assess_handler
-from .ports.cache import CachePort, NullCache
+from .ports.cache import CachePort
 from .ports.source import Source
 from .versions import version_payload
-from .wiring import build_source
+from .wiring import build_cache, build_source
 
 
 def build_mcp(settings: Settings, source: Source, cache: CachePort) -> MCPServer:
@@ -81,9 +81,14 @@ def create_mcp() -> MCPServer:
     build_direct_source directly, which meant a deployment configuring
     CODEROOT_MCP_URL got McpSource on the HTTP surface but silently kept
     performing live GitHub acquisitions on this one, with no `source`
-    parameter on assess_repository for a caller to even notice the gap.)"""
+    parameter on assess_repository for a caller to even notice the gap.)
+    Shares wiring.build_cache for the identical reason: this factory
+    previously hardcoded NullCache() unconditionally, same as app.py's did
+    before that call was replaced with build_cache(s) — leaving only this
+    entrypoint on NullCache() would have reintroduced a source/cache
+    disagreement on the stdio surface specifically."""
     s = get_settings()
-    return build_mcp(s, build_source(s), NullCache())
+    return build_mcp(s, build_source(s), build_cache(s))
 
 
 def main() -> None:

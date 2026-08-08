@@ -12,10 +12,10 @@ from pydantic import BaseModel
 from .config import Settings, get_settings
 from .errors import NotDerivable, RepoGone
 from .handlers import acquire_handler, assess_handler
-from .ports.cache import CachePort, NullCache
+from .ports.cache import CachePort
 from .ports.source import Source
 from .versions import version_payload
-from .wiring import build_source
+from .wiring import build_cache, build_source
 
 
 class SubjectIn(BaseModel):
@@ -170,4 +170,4 @@ def create_app() -> FastAPI:
     this module must have no side effects, and get_settings() deliberately raises
     when auth is unconfigured (config.py's fail-closed validator)."""
     s = get_settings()
-    return build_app(s, build_source(s), NullCache())
+    return build_app(s, build_source(s), build_cache(s))

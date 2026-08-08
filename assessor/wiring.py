@@ -11,12 +11,37 @@ drifting from) the first.
 snapshot) when `settings.coderoot_mcp_url` is configured, `DirectSource` (a
 live GitHub acquisition) otherwise. Selecting here rather than in app.py's
 endpoint is what keeps both entrypoints constructing the real adapter in
-exactly one place, matching `build_direct_source`'s own reasoning above."""
+exactly one place, matching `build_direct_source`'s own reasoning above.
+
+`build_cache` mirrors `build_source`'s predicate exactly: `McpCache` (reads/
+writes the LLM response cache through CodeRoot-MCP's `llm_cache_get`/
+`llm_cache_put` tools) when `settings.coderoot_mcp_url` is configured,
+`NullCache` (no cache; every derive re-calls the model) otherwise. This is
+not a style choice — `ports/cache.py`'s `NullCache` docstring and spec §9.6
+both say an uncached retry can have the model return a different citation,
+which flips `promoted_types`/`asset_types` and fires a spurious `changed`
+webhook on CodeRoot's path, so the source and the cache must always agree
+about whether this deployment is MCP-backed. Before this function existed,
+both production factories (`app.create_app`, `mcp_server.create_mcp`)
+hardcoded `NullCache()` unconditionally — `McpCache` was built and tested
+but never constructed outside a test, the same shape of defect as the
+bare-`httpx.Client` C1 this module's own top docstring describes.
+
+`build_cache` calls `_build_mcp_client(s)` again rather than sharing the
+instance `build_source` constructed: `McpToolClient` (mcp_client.py's module
+docstring) holds only a URL and a token and opens-then-tears-down its own
+connection on every single tool call, so it carries no persistent connection
+state a second instance would fail to reuse. Two independent instances cost
+exactly what one instance used twice costs. Keeping `build_cache` a small
+selector with the same shape as `build_source` — no shared-construction
+plumbing between them — is worth more than a reuse that would save nothing."""
 from __future__ import annotations
 
 from .assessment.git_fetch import GitContentFetcher
 from .config import Settings
 from .http_client import HttpClient
+from .ports.cache import CachePort, NullCache
+from .ports.mcp_cache import McpCache
 from .ports.mcp_source import McpSource
 from .ports.source import DirectSource, Source
 
@@ -49,3 +74,9 @@ def build_source(s: Settings) -> Source:
     if s.coderoot_mcp_url:
         return McpSource(_build_mcp_client(s))
     return build_direct_source(s)
+
+
+def build_cache(s: Settings) -> CachePort:
+    if s.coderoot_mcp_url:
+        return McpCache(_build_mcp_client(s))
+    return NullCache()
