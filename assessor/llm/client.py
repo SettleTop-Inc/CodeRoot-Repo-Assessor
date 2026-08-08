@@ -45,7 +45,29 @@ def _detailed(system: str, user_untrusted: str, response_model: type[BaseModel],
     h = prompt_hash(system, user, response_model.__name__)
     hit = cache.get(model, h) if cache is not None else None
     if hit is not None:
-        return {"data": hit, "partial": None, "reason": None}
+        # Validate the cached value with the SAME response_model the live path
+        # applies below (:model_validate -> :model_dump). Returning `hit`
+        # verbatim made whatever JSON happened to sit in `coderoot.llm_cache`
+        # the model's structured output: on CodeRoot's path that value flows
+        # into promoted_types -> asset_types -> the `changed` webhook, and
+        # CodeRoot's `POST /llm-cache` is reachable without authentication in
+        # the shipped compose profile. A row can also simply be STALE — cached
+        # under an older shape of the same response model, which is a normal
+        # consequence of the key being (model, prompt_hash) and not the
+        # schema. Running it through the model also normalises it (unknown
+        # keys dropped, defaults filled), so a hit and a live result are the
+        # same shape rather than merely both dicts.
+        #
+        # A bad row degrades to a MISS, never to a failed request: a cache is
+        # an optimisation (ports/mcp_cache.py's own docstring), so falling
+        # through re-calls the model and the `cache.put` below then overwrites
+        # the bad row with a valid one. Raising here instead would let one
+        # poisoned row fail every assess that hashes to it, permanently.
+        try:
+            return {"data": response_model.model_validate(hit).model_dump(),
+                    "partial": None, "reason": None}
+        except (ValidationError, ValueError, TypeError):
+            pass
 
     partial = None
     for attempt in range(2):  # 1 try + 1 repair

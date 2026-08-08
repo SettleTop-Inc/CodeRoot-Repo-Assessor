@@ -7,15 +7,21 @@ from __future__ import annotations
 from mcp.server.mcpserver import MCPServer
 
 from .config import Settings, get_settings
-from .errors import NotDerivable, RepoGone
+from .errors import InvalidSubdir, NotDerivable, RepoGone
 from .handlers import acquire_handler, assess_handler
 from .ports.cache import CachePort
 from .ports.source import Source
 from .versions import version_payload
-from .wiring import build_cache, build_source
+from .wiring import build_acquire_source, build_assess_source, build_cache
 
 
-def build_mcp(settings: Settings, source: Source, cache: CachePort) -> MCPServer:
+def build_mcp(settings: Settings, source: Source, cache: CachePort, *,
+              acquire_source: Source) -> MCPServer:
+    """`source` serves assess_repository; `acquire_source` serves
+    acquire_repository. Same required-keyword split as app.build_app, for the
+    same reason — see wiring.py's docstring. This surface is if anything more
+    exposed to the bug: `assess_repository` has no `source` parameter, so a
+    caller cannot even ask which path it got."""
     mcp = MCPServer(name="coderoot-repo-assessor")
 
     @mcp.tool()
@@ -36,6 +42,8 @@ def build_mcp(settings: Settings, source: Source, cache: CachePort) -> MCPServer
         # destroy the very discriminator this mapping exists to preserve.
         try:
             return assess_handler(source, cache, settings, subject)
+        except InvalidSubdir as exc:
+            return {"error": "invalid_subdir", "reason": str(exc)}
         except NotDerivable as exc:
             return {"error": "not_derivable", "reason": str(exc)}
         except RepoGone:
@@ -54,7 +62,8 @@ def build_mcp(settings: Settings, source: Source, cache: CachePort) -> MCPServer
         # the HTTP surface, which also only catches RepoGone/ValueError on
         # this route.
         try:
-            return acquire_handler(source, repo_url, None)
+            # `acquire_source`, never `source` — see build_mcp's docstring.
+            return acquire_handler(acquire_source, repo_url, None)
         except RepoGone:
             return {"error": "repo_gone"}
         except ValueError as exc:
@@ -75,10 +84,11 @@ def create_mcp() -> MCPServer:
     for the same reason as app.create_app(): importing this module must have
     no side effects, and get_settings() deliberately raises when auth is
     unconfigured (config.py's fail-closed validator). Shares
-    wiring.build_source with the HTTP entrypoint, which selects DirectSource
-    or McpSource from settings.coderoot_mcp_url — so the two surfaces cannot
-    diverge on where their data comes from. (Previously called
-    build_direct_source directly, which meant a deployment configuring
+    wiring.build_assess_source with the HTTP entrypoint, which selects
+    DirectSource or McpSource from settings.coderoot_mcp_url — so the two
+    surfaces cannot diverge on where their data comes from — and
+    wiring.build_acquire_source, which is always a DirectSource on both.
+    (Previously called build_direct_source directly, which meant a deployment configuring
     CODEROOT_MCP_URL got McpSource on the HTTP surface but silently kept
     performing live GitHub acquisitions on this one, with no `source`
     parameter on assess_repository for a caller to even notice the gap.)
@@ -88,7 +98,8 @@ def create_mcp() -> MCPServer:
     entrypoint on NullCache() would have reintroduced a source/cache
     disagreement on the stdio surface specifically."""
     s = get_settings()
-    return build_mcp(s, build_source(s), build_cache(s))
+    return build_mcp(s, build_assess_source(s), build_cache(s),
+                     acquire_source=build_acquire_source(s))
 
 
 def main() -> None:

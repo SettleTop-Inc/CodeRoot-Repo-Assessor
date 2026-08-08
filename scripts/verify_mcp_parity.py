@@ -306,7 +306,7 @@ def main() -> int:
         "mcp_settings unexpectedly carries a GitHub token -- the zero-request "
         "claim below would not be structurally sound")
 
-    mcp_source = wiring.build_source(mcp_settings)
+    mcp_source = wiring.build_assess_source(mcp_settings)
     assert type(mcp_source).__name__ == "McpSource"
     cache = NullCache()
 

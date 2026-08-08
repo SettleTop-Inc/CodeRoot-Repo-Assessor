@@ -210,9 +210,10 @@ def test_create_app_wires_a_real_http_client_not_a_bare_httpx_client(monkeypatch
     captured = {}
     real_build_app = app_module.build_app
 
-    def spy(settings, source, cache):
+    def spy(settings, source, cache, *, acquire_source):
         captured["source"] = source
-        return real_build_app(settings, source, cache)
+        captured["acquire_source"] = acquire_source
+        return real_build_app(settings, source, cache, acquire_source=acquire_source)
 
     monkeypatch.setattr(app_module, "build_app", spy)
     try:
@@ -229,6 +230,11 @@ def test_create_app_wires_a_real_http_client_not_a_bare_httpx_client(monkeypatch
     # A bare httpx.Client — the actual C1 bug — has neither method, which is
     # why every real acquisition 500'd on the first call inside resolve_head.
     assert not hasattr(httpx.Client(), "get_json")
+    # C1 was an ACQUISITION failure specifically, and acquisition now has its
+    # own source. Assert that one carries the adapter too, or the regression
+    # could return on the route it originally broke while this test kept
+    # passing on the assess source.
+    assert isinstance(captured["acquire_source"].http, HttpClient)
 
 
 def test_create_mcp_wires_a_real_http_client_not_a_bare_httpx_client(monkeypatch):
@@ -242,9 +248,10 @@ def test_create_mcp_wires_a_real_http_client_not_a_bare_httpx_client(monkeypatch
     captured = {}
     real_build_mcp = mcp_module.build_mcp
 
-    def spy(settings, source, cache):
+    def spy(settings, source, cache, *, acquire_source):
         captured["source"] = source
-        return real_build_mcp(settings, source, cache)
+        captured["acquire_source"] = acquire_source
+        return real_build_mcp(settings, source, cache, acquire_source=acquire_source)
 
     monkeypatch.setattr(mcp_module, "build_mcp", spy)
     try:

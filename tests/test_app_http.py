@@ -42,9 +42,15 @@ class _Source:
     def prior_assessment(self, subject): return None
 
 
-def _client(settings=None, source=None):
+def _client(settings=None, source=None, acquire_source=None):
+    """`acquire_source` defaults to the SAME double as `source` — these tests
+    predate the acquire/assess source split and exercise one behaviour at a
+    time, so a single double keeps them reading as before. The split itself is
+    covered in test_wiring.py and test_acquire_source_split.py."""
     s = settings or Settings(assessor_api_token="tok")
-    return TestClient(build_app(s, source or _Source(), NullCache()))
+    src = source or _Source()
+    return TestClient(build_app(s, src, NullCache(),
+                                acquire_source=acquire_source or src))
 
 
 # commit_sha is "" here, not a pinned value: /v1/assess rejects any non-empty
@@ -126,7 +132,7 @@ def test_assess_with_malformed_repo_url_via_real_direct_source_is_400_not_500():
     # http and fetcher are never touched, so None stand-ins are safe here.
     s = Settings(assessor_api_token="tok")
     real_source = DirectSource(s, None, None)
-    c = TestClient(build_app(s, real_source, NullCache()))
+    c = TestClient(build_app(s, real_source, NullCache(), acquire_source=real_source))
     body = {"subject": {"repo_url": "https://github.com/../../etc/passwd",
                         "subject_key": "rid-1", "commit_sha": "", "subdir": ""},
             "source": "direct"}
@@ -215,9 +221,10 @@ def test_create_app_selects_mcp_source_when_configured(monkeypatch):
     captured = {}
     real_build_app = app_module.build_app
 
-    def spy(settings, source, cache):
+    def spy(settings, source, cache, *, acquire_source):
         captured["source"] = source
-        return real_build_app(settings, source, cache)
+        captured["acquire_source"] = acquire_source
+        return real_build_app(settings, source, cache, acquire_source=acquire_source)
 
     monkeypatch.setattr(app_module, "build_app", spy)
     try:
@@ -266,7 +273,9 @@ def test_non_ascii_bearer_header_is_401_not_500():
     # into the scope, matching how a real non-ASCII header arrives over the
     # wire (ASGI headers are always raw bytes; latin-1 is what an ASGI server
     # decodes/carries them as per the spec).
-    app = build_app(Settings(assessor_api_token="tok"), _Source(), NullCache())
+    _src = _Source()
+    app = build_app(Settings(assessor_api_token="tok"), _src, NullCache(),
+                    acquire_source=_src)
     headers = [(b"authorization", "Bearer ünicode".encode("latin-1"))]
     scope = {"type": "http", "method": "GET", "path": "/v1/version",
              "raw_path": b"/v1/version", "query_string": b"", "headers": headers,

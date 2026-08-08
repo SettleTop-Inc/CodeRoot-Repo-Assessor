@@ -19,3 +19,19 @@ class NotDerivable(Exception):
 
 class RepoGone(Exception):
     """Gone, renamed or private. Maps to 410. Terminal — do not retry."""
+
+
+class InvalidSubdir(Exception):
+    """The request's `subdir` failed `assessment.subject.normalize_subdir` —
+    a `..` segment, or an absolute/drive-letter path. Maps to 400.
+
+    Deliberately NOT 422/`NotDerivable`: that says "re-acquire and retry", and
+    a structurally invalid subdir cannot be fixed by acquiring anything. It is
+    a malformed REQUEST, in the same family as `invalid_repo_url`.
+
+    Deliberately NOT a `ValueError` subclass either, even though
+    `normalize_subdir` raises one: both surfaces already map a bare ValueError
+    to `invalid_repo_url` (it is what `ports.source._split` raises), and a
+    subdir fault reported as a repo-url fault sends the operator to the wrong
+    field. A distinct type keeps the two discriminable no matter which order
+    the `except` clauses happen to sit in."""

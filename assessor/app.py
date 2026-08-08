@@ -10,12 +10,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .config import Settings, get_settings
-from .errors import NotDerivable, RepoGone
+from .errors import InvalidSubdir, NotDerivable, RepoGone
 from .handlers import acquire_handler, assess_handler
 from .ports.cache import CachePort
 from .ports.source import Source
 from .versions import version_payload
-from .wiring import build_cache, build_source
+from .wiring import build_acquire_source, build_assess_source, build_cache
 
 
 class SubjectIn(BaseModel):
@@ -41,7 +41,18 @@ class AssessIn(BaseModel):
     source: str = "direct"
 
 
-def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
+def build_app(settings: Settings, source: Source, cache: CachePort, *,
+              acquire_source: Source) -> FastAPI:
+    """`source` serves /v1/assess; `acquire_source` serves /v1/acquire.
+
+    Two arguments, not one, and `acquire_source` is keyword-ONLY and has no
+    default: on the deployment shape production runs (compose sets both
+    GITHUB_TOKENS and CODEROOT_MCP_URL on one assessor service) a single
+    source made /v1/acquire an unconditional 500, because the MCP-configured
+    selection handed the acquire route an `McpSource` whose `acquire` raises
+    NotImplementedError by design. Requiring the caller to name the acquire
+    source means a call site that collapses the two back together has to do so
+    visibly, rather than by omitting an argument. See wiring.py's docstring."""
     # docs_url/redoc_url/openapi_url disabled: the default /docs, /redoc and
     # /openapi.json are unauthenticated and would disclose the full request/
     # response schema — including /v1/acquire's, which clones a caller-supplied
@@ -77,13 +88,26 @@ def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
         # A down model gateway is silent — it produces the same empty result as
         # a model that declined. Report reachability explicitly so the operator
         # can tell those apart without reading assessment output.
+        #
+        # `acquire` reports the same class of silent degradation for the OTHER
+        # credential this service holds. With no GITHUB_TOKENS configured,
+        # /v1/acquire still works — HttpClient sends no Authorization header
+        # rather than raising — but at GitHub's anonymous 60 req/hr instead of
+        # 5000, which surfaces downstream only as acquire units mysteriously
+        # exhausting their attempts. Refusing the request outright would be
+        # worse (anonymous acquisition of public repos is a legitimate
+        # standalone configuration), so report the state instead of changing
+        # it. Reports the CONFIGURATION, not reachability: unlike the model
+        # gateway there is nothing to probe that would not itself spend quota.
+        acquire = "authenticated" if settings.github_token_list else "anonymous"
         if settings.llm_provider == "none" or not settings.llm_base_url:
-            return {"status": "ok", "llm": "off"}
+            return {"status": "ok", "llm": "off", "acquire": acquire}
         try:
             r = httpx.get(settings.llm_base_url.rstrip("/") + "/models", timeout=5)
-            return {"status": "ok", "llm": "up" if r.status_code < 500 else "down"}
+            return {"status": "ok", "llm": "up" if r.status_code < 500 else "down",
+                    "acquire": acquire}
         except Exception:
-            return {"status": "ok", "llm": "unreachable"}
+            return {"status": "ok", "llm": "unreachable", "acquire": acquire}
 
     @app.get("/v1/version", dependencies=[Depends(auth)])
     def version() -> dict:
@@ -102,7 +126,10 @@ def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
                                          "reason": "ref pinning is not supported by "
                                                    "this deployment"})
         try:
-            return acquire_handler(source, body.repo_url,
+            # `acquire_source`, never `source`: this route always contacts
+            # GitHub (spec §5.1), including on an MCP-configured deployment
+            # where `source` is an McpSource that cannot acquire at all.
+            return acquire_handler(acquire_source, body.repo_url,
                                    body.prior.model_dump() if body.prior else None)
         except RepoGone:
             return JSONResponse(status_code=410, content={"error": "repo_gone"})
@@ -128,7 +155,7 @@ def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
                                          "reason": "commit_sha pinning is not supported "
                                                    "by this deployment"})
         # "direct" always works. "mcp" only works when this deployment is
-        # actually wired to CodeRoot-MCP (wiring.build_source picks McpSource
+        # actually wired to CodeRoot-MCP (wiring.build_assess_source picks McpSource
         # over DirectSource from settings.coderoot_mcp_url) — silently
         # falling back to DirectSource for an unconfigured deployment would
         # perform a live GitHub acquisition instead of the zero-cost
@@ -148,6 +175,21 @@ def build_app(settings: Settings, source: Source, cache: CachePort) -> FastAPI:
                                                    "to be configured on this deployment"})
         try:
             return assess_handler(source, cache, settings, body.subject.model_dump())
+        except InvalidSubdir as exc:
+            # 400, NOT 422, and the distinction is load-bearing across the
+            # network boundary. CodeRoot's `assessor_client` maps 422 to
+            # `NotDerivable`, whose documented action is "re-arm acquire and
+            # skip" — for a subdir that is structurally invalid that would
+            # re-acquire and re-fail forever, because no amount of acquiring
+            # can make `../../other-repo` a valid subtree. A 4xx that is
+            # neither 410 nor 422 falls through to that client's
+            # `raise_for_status()` and surfaces loudly as the data fault it is.
+            # 400 also matches how this surface already answers every other
+            # malformed-input case (`unsupported_field`, `invalid_repo_url`);
+            # 422 here is reserved for `not_derivable`, a condition about the
+            # snapshot rather than about the request.
+            return JSONResponse(status_code=400,
+                                content={"error": "invalid_subdir", "reason": str(exc)})
         except NotDerivable as exc:
             return JSONResponse(status_code=422,
                                 content={"error": "not_derivable", "reason": str(exc)})
@@ -170,4 +212,5 @@ def create_app() -> FastAPI:
     this module must have no side effects, and get_settings() deliberately raises
     when auth is unconfigured (config.py's fail-closed validator)."""
     s = get_settings()
-    return build_app(s, build_source(s), build_cache(s))
+    return build_app(s, build_assess_source(s), build_cache(s),
+                     acquire_source=build_acquire_source(s))

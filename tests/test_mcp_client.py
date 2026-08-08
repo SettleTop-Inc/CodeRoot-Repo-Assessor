@@ -56,6 +56,7 @@ import pytest
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 
+from assessor.errors import NotDerivable
 from assessor.mcp_client import McpToolClient, McpToolError
 from assessor.ports.mcp_cache import McpCache
 from assessor.ports.mcp_source import McpSource
@@ -290,20 +291,80 @@ def test_snapshot_matches_the_real_coderoot_mcp_tool_contract():
 @pytest.mark.skipif(_build_server is None,
                     reason="CodeRoot-MCP sibling repo not checked out next to this one "
                            "(expected at D:/Development/SettleTop/CodeRoot-MCP)")
-def test_real_coderoot_mcp_not_acquired_surfaces_as_a_raise():
-    """The real server's 404-mapping (`{"error": "not_acquired"}`, distinct
-    from an upstream failure) must also raise here, not just the synthetic
-    upstream_error case tier 1 covers."""
+def _failing_backend(status: int):
+    """A CodeRoot HTTP backend double whose `get_subject` raises the given
+    status, so the REAL CodeRoot-MCP server picks its own discriminator for
+    it (`_http_error_payload`: 404 -> not_acquired, anything else ->
+    upstream_error). The status is the only thing these tests choose; the
+    payload comes from CodeRoot-MCP's unmodified code."""
     import httpx
 
-    class _NotAcquired(_CodeRootHttpDouble):
+    class _Failing(_CodeRootHttpDouble):
         def get_subject(self, repo_id, subdir):
             request = httpx.Request("GET", "http://api.test/x")
-            response = httpx.Response(404, request=request)
-            raise httpx.HTTPStatusError("404 error", request=request, response=response)
+            response = httpx.Response(status, request=request)
+            raise httpx.HTTPStatusError(f"{status} error", request=request,
+                                        response=response)
 
-    server = _build_server(_NotAcquired())
-    with _serve(server) as url:
+    return _Failing()
+
+
+@pytest.mark.skipif(_build_server is None,
+                    reason="CodeRoot-MCP sibling repo not checked out next to this one "
+                           "(expected at D:/Development/SettleTop/CodeRoot-MCP)")
+def test_real_coderoot_mcp_not_acquired_becomes_not_derivable():
+    """Spec §8 row 1: "CodeRoot has no acquisition row" is a 422
+    `not_derivable`, which makes CodeRoot re-arm acquire and skip the assess.
+
+    Before this mapping the chain ran: CodeRoot 404 -> CodeRoot-MCP
+    `{"error": "not_acquired"}` -> `McpToolError` -> uncaught by both
+    `McpSource.snapshot` and app.py's mapping -> 500 -> `AssessorUnavailable`
+    -> the assess unit retried until it exhausted its attempts, and acquire
+    was NEVER re-armed, so the repo could never become derivable. The whole
+    condition is unreadable-snapshot, which is precisely `NotDerivable`.
+
+    Driven through the REAL `build_server` and a REAL socket, doubling only
+    the CodeRoot HTTP backend -- so the discriminator under test is the one
+    CodeRoot-MCP actually emits, not one this file invented."""
+    with _serve(_build_server(_failing_backend(404))) as url:
+        with pytest.raises(NotDerivable):
+            McpSource(McpToolClient(url)).snapshot(_SUBJECT)
+
+
+@pytest.mark.skipif(_build_server is None,
+                    reason="CodeRoot-MCP sibling repo not checked out next to this one "
+                           "(expected at D:/Development/SettleTop/CodeRoot-MCP)")
+def test_real_coderoot_mcp_upstream_error_does_not_become_not_derivable():
+    """The other half, and the one that keeps the fix honest. `not_acquired`
+    means RE-ACQUIRE; `upstream_error` means RETRY -- CodeRoot itself is down.
+    Mapping both to NotDerivable would make every CodeRoot blip re-arm acquire
+    across the whole corpus, so this asserts the raise is still an
+    `McpToolError` carrying the upstream discriminator, i.e. still a 5xx.
+
+    `NotDerivable` is checked explicitly rather than relying on
+    `pytest.raises(McpToolError)` alone: the two classes are unrelated, so a
+    regression that mapped everything would fail here loudly rather than
+    quietly satisfying a broader `Exception` match."""
+    with _serve(_build_server(_failing_backend(503))) as url:
         with pytest.raises(McpToolError) as exc_info:
             McpSource(McpToolClient(url)).snapshot(_SUBJECT)
-        assert exc_info.value.payload == {"error": "not_acquired"}
+        assert not isinstance(exc_info.value, NotDerivable)
+        assert exc_info.value.payload["error"] == "upstream_error"
+
+
+@pytest.mark.skipif(_build_server is None,
+                    reason="CodeRoot-MCP sibling repo not checked out next to this one "
+                           "(expected at D:/Development/SettleTop/CodeRoot-MCP)")
+def test_real_coderoot_mcp_metrics_discriminates_the_same_two_conditions():
+    """`McpSource.metrics` reads the SAME `/repos/{id}/subject` endpoint
+    through CodeRoot-MCP's `get_metrics` (coderoot_mcp/server.py:78), so its
+    `not_acquired` means "no acquisition row" too, and must map identically.
+    `assess_handler` calls `snapshot` first, so this only fires when the row
+    disappears between the two calls -- but that window produced a 500 too."""
+    with _serve(_build_server(_failing_backend(404))) as url:
+        with pytest.raises(NotDerivable):
+            McpSource(McpToolClient(url)).metrics(_SUBJECT)
+    with _serve(_build_server(_failing_backend(503))) as url:
+        with pytest.raises(McpToolError) as exc_info:
+            McpSource(McpToolClient(url)).metrics(_SUBJECT)
+        assert not isinstance(exc_info.value, NotDerivable)

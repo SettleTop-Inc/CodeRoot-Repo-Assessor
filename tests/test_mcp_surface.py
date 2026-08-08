@@ -54,8 +54,12 @@ class _Source:
     def prior_assessment(self, subject): return None
 
 
-def _mcp(source=None):
-    return build_mcp(Settings(assessor_api_token="x"), source or _Source(), NullCache())
+def _mcp(source=None, acquire_source=None):
+    """Single double for both sources by default — same reasoning as
+    test_app_http.py's `_client`; the split is covered in its own file."""
+    src = source or _Source()
+    return build_mcp(Settings(assessor_api_token="x"), src, NullCache(),
+                     acquire_source=acquire_source or src)
 
 
 async def _call(tool, args, source=None):
@@ -174,7 +178,8 @@ async def test_invalid_repo_url_body_is_byte_identical_between_mcp_and_http():
     bad_url = "https://github.com/../../etc/passwd"
 
     http_source = DirectSource(s, None, None)
-    http_client = TestClient(build_app(s, http_source, NullCache()))
+    http_client = TestClient(build_app(s, http_source, NullCache(),
+                                       acquire_source=http_source))
     http_body = {"subject": {"repo_url": bad_url, "subject_key": "rid-1",
                              "commit_sha": "", "subdir": ""}, "source": "direct"}
     http_response = http_client.post("/v1/assess", json=http_body,
