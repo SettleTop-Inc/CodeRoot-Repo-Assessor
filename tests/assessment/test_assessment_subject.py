@@ -65,3 +65,24 @@ def test_filter_sibling_prefix_boundary_no_collision():
     content = {"foo/a.py": "1", "foobar/b.py": "2", "foo": "self"}
     assert filter_content_to_subdir(content, "foo") == {"a.py": "1", "foo": "self"}
     assert filter_paths_to_subdir(("foo/a.py", "foobar/b.py"), "foo") == ("a.py",)
+
+
+def test_dot_segment_collapses_to_the_same_subject_as_no_dot():
+    # A bare '.' segment used to survive normalization, so "pkg/./a" and
+    # "pkg/a" normalized to two DIFFERENT strings and therefore minted two
+    # different asset_ids for what is really the same directory. Collapsing
+    # '.' the same way '' already is closes that alias.
+    assert normalize_subdir("pkg/./a") == normalize_subdir("pkg/a") == "pkg/a"
+    r = "11111111-1111-1111-1111-111111111111"
+    assert asset_id(r, normalize_subdir("pkg/./a")) == asset_id(r, normalize_subdir("pkg/a"))
+
+
+def test_dot_segment_no_longer_derives_a_verdict_from_zero_files():
+    # Before the fix, a subdir normalized from "pkg/./a" stayed "pkg/./a" and
+    # filter_content_to_subdir's exact-prefix match against real content keyed
+    # by "pkg/a/..." matched nothing, silently returning {} -- an
+    # assessable-looking but empty content set. After the collapse, the same
+    # content dict actually matches.
+    content = {"pkg/a/SKILL.md": "---\nname: a\n---", "README.md": "root"}
+    subdir = normalize_subdir("pkg/./a")
+    assert filter_content_to_subdir(content, subdir) == {"SKILL.md": "---\nname: a\n---"}

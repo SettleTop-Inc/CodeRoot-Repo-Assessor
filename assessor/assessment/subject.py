@@ -14,9 +14,14 @@ def normalize_subdir(raw: str | None) -> str:
 
     Normalizes '\\' to '/' first (so a Windows-typed path works AND a
     backslash-delimited traversal is caught), strips leading/trailing '/',
-    collapses internal '//', and returns "" for None / empty / ".". Raises
-    ValueError on any ".." path segment or an absolute/drive-letter path.
-    This is the canonical validation gate for a user-supplied subdir.
+    collapses internal '//' and '.' segments, and returns "" for None / empty
+    / ".". Raises ValueError on any ".." path segment or an embedded colon (a
+    Windows drive letter, e.g. "C:/x", or any other ":"). Leading '/' is
+    stripped BEFORE that validation runs, so an absolute-looking path
+    ("/etc") or a UNC-style path ("\\\\server\\share") is treated as
+    RELATIVE and ACCEPTED, not rejected -- only ".." segments and embedded
+    colons actually raise. This is the canonical validation gate for a
+    user-supplied subdir.
     """
     if raw is None:
         return ""
@@ -26,7 +31,7 @@ def normalize_subdir(raw: str | None) -> str:
     if ":" in s:
         # Windows drive letter (e.g. "C:/x") or any other embedded colon.
         raise ValueError(f"invalid subdir: {raw!r}")
-    segments = [seg for seg in s.split("/") if seg != ""]
+    segments = [seg for seg in s.split("/") if seg not in ("", ".")]
     if any(seg == ".." for seg in segments):
         raise ValueError(f"invalid subdir: {raw!r}")
     return "/".join(segments)
