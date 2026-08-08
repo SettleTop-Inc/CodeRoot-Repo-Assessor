@@ -13,7 +13,17 @@ WEAK = 0.6
 TIER_CONF = {"strong": STRONG, "weak": WEAK}
 _TIER_RANK = {"strong": 1, "weak": 0}
 
-REGISTRY_VERSION = 9   # bump on every TYPE_MODULES/marker-semantics change; ships rearm_all_assess (§6)
+REGISTRY_VERSION = 10  # bump on every TYPE_MODULES/marker-semantics change; ships rearm_all_assess (§6)
+# 9 -> 10: classify_mcp's python-dep check was an exact quoted-string match
+# (`'"mcp"' in pyproject`), so ANY version pin defeated it -- "mcp>=2.0",
+# "mcp==1.2.0" and "mcp[cli]>=1.0" all failed to match while bare "mcp" matched.
+# Pinning is the norm, so this suppressed the strong dep marker across the corpus:
+# CodeRoot-MCP, an actual MCP server, was classified weak(0.6) on a README keyword
+# alone. It now reads the same manifest-aware parser classify_agent already used.
+# This CHANGES CLASSIFICATION OUTCOMES for any repo with a pinned mcp dependency,
+# which is precisely what this constant signals -- CodeRoot polls /v1/version and
+# re-arms the corpus so the improvement actually reaches stored records instead of
+# applying only to repos acquired after the fix.
 # 8->9: classify_skill's SKILL.md marker became POSITIONAL (root or skills/<name>/ only).
 # This IS a marker-semantics change, so unlike the 2026-07-25 dep-manifest widening it must
 # be versioned: agent-host config directories (.codex/skills/, .cline/skills/,
