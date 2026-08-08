@@ -50,12 +50,17 @@ def _norm(name: str) -> str:
 # CLASSIFICATION dependency reach — DO NOT WIDEN.
 # =====================================================================================
 # `_all_deps` is the NARROW, root-only reader. It is the ONLY dep source allowed to
-# reach real classification / composition / the content fingerprint, and it has three
+# reach real classification / composition / the content fingerprint, and it has four
 # consumers, all classification-bearing:
 #   1. `classify` below            — an AGENT_DEPS hit is a STRONG `agent` match, and
 #                                    PRECEDENCE puts `agent` ahead of `mcp_server`.
 #   2. `compose_agent._framework`  — feeds `compose_agent.fingerprint_facts`.
 #   3. `compose_mcp._external_delegation`.
+#   4. `classify_mcp.classify`     — a pinned/extras `mcp` dep (`mcp>=2.0`, `mcp[cli]>=1.0`)
+#                                    is a STRONG `mcp_server` match; a raw `'"mcp"' in
+#                                    pyproject` substring only ever caught the unpinned
+#                                    literal, which is a recall hole since pinning is the
+#                                    norm.
 # `acquire` now fetches dependency manifests from SUBDIRECTORIES and from non-Python/JS
 # ecosystems (content.py `_DEP_MANIFESTS`). Letting those reach the consumers above
 # would let an unrelated subpackage's manifest flip a repo's primary type — e.g. a
@@ -66,7 +71,7 @@ def _norm(name: str) -> str:
 # `pyproject.toml` only.
 #
 # If you need the widened reach, use `all_deps_wide` below — and read its docstring
-# first: it must NEVER be wired into any of the three consumers above.
+# first: it must NEVER be wired into any of the four consumers above.
 def _all_deps(content: dict[str, str]) -> set[str]:
     deps: set[str] = set()
     try:
@@ -292,11 +297,11 @@ def all_deps_wide(content: dict[str, str]) -> set[str]:
     bespoke-agent CANDIDATE probe, which is curator-review output and never enters
     `asset_types`, `primary_type`, risk, or the content fingerprint).
 
-    DO NOT wire this into `classify` below, `compose_agent._framework`, or
-    `compose_mcp._external_delegation` — use the narrow `_all_deps` there. Doing so
-    would let an unrelated subdirectory's manifest change a repo's real classification
-    (the rejected "auto-classify bespoke agents" behavior arriving indirectly); see the
-    banner above `_all_deps`.
+    DO NOT wire this into `classify` below, `compose_agent._framework`,
+    `compose_mcp._external_delegation`, or `classify_mcp.classify` — use the narrow
+    `_all_deps` there. Doing so would let an unrelated subdirectory's manifest change a
+    repo's real classification (the rejected "auto-classify bespoke agents" behavior
+    arriving indirectly); see the banner above `_all_deps`.
     """
     deps: set[str] = set()
     for path, text in (content or {}).items():

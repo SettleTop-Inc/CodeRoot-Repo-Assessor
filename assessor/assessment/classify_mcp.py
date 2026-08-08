@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import re
 
+from .classify_agent import _all_deps
+
 NAME = "mcp_server"
 
 _STRONG = 0.95
@@ -67,7 +69,13 @@ def classify(content: dict[str, str], *, paths=(), meta=None) -> dict:
         ev.append({"path": "package.json", "marker": "dep @modelcontextprotocol/sdk"})
         strong = True
     pyproject = content.get("pyproject.toml", "")
-    if "modelcontextprotocol" in pyproject or "\nmcp" in pyproject or '"mcp"' in pyproject:
+    # `_all_deps` (classify_agent's narrow, root-only manifest reader) handles version
+    # pins/extras (`mcp>=2.0`, `mcp[cli]>=1.0`) that a raw `'"mcp"' in pyproject` substring
+    # match cannot — that match only ever caught the unpinned literal `"mcp"` and version
+    # pinning is the norm, so it was a recall hole. The two raw-text fallbacks stay: they
+    # catch shapes `_all_deps`'s dependencies-array/poetry-table parser does not (e.g. a
+    # bare `mcp` key at column 0 outside a recognized table).
+    if "modelcontextprotocol" in pyproject or "\nmcp" in pyproject or "mcp" in _all_deps(content):
         ev.append({"path": "pyproject.toml", "marker": "python mcp package"})
         strong = True
     for m in ("mcp.json", "server.json"):
