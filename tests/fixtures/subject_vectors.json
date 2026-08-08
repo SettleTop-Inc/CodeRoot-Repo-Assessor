@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "Shared drift vectors for the dual-homed assessment/subject.py normalize_subdir",
+    "(extraction spec 6.4). This file is byte-identical in CodeRoot-OpenSource and",
+    "CodeRoot-Repo-Assessor; both suites assert it, so a divergent copy fails loudly.",
+    "DERIVED BY EXECUTION, not from a design sketch: every entry below was run through",
+    "the implementation and records what it actually returned. Three inputs a design",
+    "sketch predicted would be REJECTED are in fact accepted -- '/absolute',",
+    "'pkg/./a' and the UNC-style backslash path -- and are recorded as accepts here.",
+    "The reject list is the security-relevant half: normalize_subdir is the canonical",
+    "validation gate for an attacker-supplied subdir on CodeRoot's request path."
+  ],
+  "accept": [
+    {"in": "", "out": ""},
+    {"in": ".", "out": ""},
+    {"in": "///", "out": ""},
+    {"in": "pkg/a", "out": "pkg/a"},
+    {"in": "/pkg/a/", "out": "pkg/a"},
+    {"in": "pkg//a", "out": "pkg/a"},
+    {"in": "a//b//c", "out": "a/b/c"},
+    {"in": " pkg/a ", "out": "pkg/a"},
+    {"in": "packages\\x", "out": "packages/x"},
+    {"in": ".hidden/x", "out": ".hidden/x"},
+    {"in": "pkg/.../a", "out": "pkg/.../a"},
+    {"in": "..%2fetc", "out": "..%2fetc"},
+    {"in": "/absolute", "out": "absolute"},
+    {"in": "pkg/./a", "out": "pkg/./a"},
+    {"in": "\\\\server\\share", "out": "server/share"}
+  ],
+  "reject": [
+    "..",
+    "../etc",
+    "../x",
+    "pkg/..",
+    "pkg/a/..",
+    "pkg/../../etc",
+    "a/../../etc",
+    "/abs/../..",
+    "a\\..\\b",
+    "..\\..\\etc",
+    "C:/windows",
+    "c:\\windows",
+    "C:/x",
+    "http://evil"
+  ]
+}
