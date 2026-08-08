@@ -95,7 +95,7 @@ def test_declared_identity_suppressor_drops_prose_only_mcp():
 def test_taxonomy_uncovered_after_skill_prompt():
     rec = assemble.build("https://github.com/o/x", {"README.md": "a plain lib"}, "sha", None, settings=_S)
     cls = rec["assessment"]["classification"]
-    assert cls["registry_version"] == 9
+    assert cls["registry_version"] == 10
     assert cls["taxonomy_uncovered"] == ["dataset", "model", "tool", "workflow"]
     assert cls["types_checked"] == ["agent", "mcp_server", "prompt", "skill"]
 

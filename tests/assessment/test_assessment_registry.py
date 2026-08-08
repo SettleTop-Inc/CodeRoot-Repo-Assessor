@@ -8,7 +8,7 @@ def _m(t, tier):
 
 
 def test_constants():
-    assert STRONG == 0.95 and WEAK == 0.6 and REGISTRY_VERSION == 9
+    assert STRONG == 0.95 and WEAK == 0.6 and REGISTRY_VERSION == 10
     assert len(FULL_TAXONOMY) == 8 and set(PRECEDENCE) == set(FULL_TAXONOMY)
 
 

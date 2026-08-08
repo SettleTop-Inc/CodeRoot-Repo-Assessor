@@ -112,7 +112,7 @@ def test_version_endpoint_reports_all_three_versions():
     assert r.status_code == 200
     assert set(r.json()) == {"registry_version", "allowlist_version",
                              "marker_vocab_version"}
-    assert r.json()["registry_version"] == 9
+    assert r.json()["registry_version"] == 10
     assert r.json()["allowlist_version"] == 7
 
 
