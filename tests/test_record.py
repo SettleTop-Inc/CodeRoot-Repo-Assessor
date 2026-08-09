@@ -4,8 +4,6 @@ A malformed record is an ABSENT record (Global Constraint 6): this module
 never raises on bad input and never fails an assessment."""
 import json
 
-import pytest
-
 from assessor.assessment.record import (RECORD_BASENAME, RECORD_MAX_BYTES,
                                         declared_block, parse_record)
 
@@ -116,3 +114,16 @@ def test_declared_block_omits_dropped_fields():
     block = declared_block(_content(bad))
     assert "model_access" not in block
     assert "technologies" in block
+
+
+def test_deeply_nested_json_returns_none():
+    # Deeply-nested JSON can cause RecursionError in json.loads; must not propagate
+    # 8000 bytes of nested brackets, under the 16KiB cap
+    body = "[" * 8000
+    assert parse_record({RECORD_BASENAME: body}) is None
+
+
+def test_record_version_true_rejected():
+    # Boolean True == 1 in Python, but must not pass version gate
+    bad = dict(GOOD, record_version=True)
+    assert parse_record(_content(bad)) is None

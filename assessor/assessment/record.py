@@ -68,9 +68,14 @@ def parse_record(content: dict[str, str]) -> dict | None:
         return None
     try:
         raw = json.loads(body)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
+        # RecursionError can occur on deeply-nested JSON; treat as malformed
         return None
-    if not isinstance(raw, dict) or raw.get("record_version") != 1:
+    if not isinstance(raw, dict):
+        return None
+    rv = raw.get("record_version")
+    # Exclude booleans: True == 1 but is not a valid version
+    if not (isinstance(rv, int) and not isinstance(rv, bool) and rv == 1):
         return None
     conf = raw.get("confirmation")
     return {
