@@ -1,0 +1,48 @@
+"""The `declared` block on the served assessment (Task 6, spec §4).
+
+`assemble.build` computes `declared_block(content)` (record.py, Task 1) and serves
+it at `assessment["declared"]` — but must NOT let it leak into `build_payload`/
+`compute_fingerprint`: the fingerprint-parity guard is the existing fingerprint
+tests (test_assessment_fingerprint.py, test_assessment_recall_drift.py), which must
+stay green untouched by this change.
+"""
+import json
+
+from assessor.assessment import assemble
+from assessor.assessment.record import RECORD_BASENAME
+
+from conftest import _S
+
+# Copied from tests/test_record.py's GOOD (Task 1's contract) rather than imported,
+# so this test file does not depend on test_record.py's module layout.
+GOOD = {
+    "record_version": 1,
+    "created_by": "settletop-niles",
+    "created_at": "2026-08-09T00:00:00Z",
+    "source_repo": {"host": "github.com", "owner": "SettleTop-Inc", "name": "example"},
+    "maintained_by": "SettleTop-Inc",
+    "technologies": {"language": "python", "framework": "mcp",
+                     "runtime": "python>=3.11", "dependencies": ["mcp", "httpx"]},
+    "model_access": {"mode": "byo", "provider": None, "model": None},
+    "confirmation": {"mode": "elicitation",
+                     "confirmed": ["created_by", "maintained_by", "model_access.mode"],
+                     "complete": True},
+}
+
+# A content fixture that actually classifies (mirrors golden_mcp's "strong-dep" corpus
+# entry), so the test exercises a real `assemble.build` asset path, not `not_an_asset`.
+MCP_FIXTURE_CONTENT = {
+    "package.json": json.dumps({"dependencies": {"@modelcontextprotocol/sdk": "^1.0"}}),
+    "src/index.ts": 'srv.registerTool("search", {});',
+}
+
+
+def test_declared_block_served_when_record_present():
+    content = {**MCP_FIXTURE_CONTENT, RECORD_BASENAME: json.dumps(GOOD)}
+    out = assemble.build("https://github.com/o/n", content, "sha", None, settings=_S)
+    assert out["assessment"]["declared"]["technologies"]["language"]["value"] == "python"
+
+
+def test_declared_none_when_absent():
+    out = assemble.build("https://github.com/o/n", MCP_FIXTURE_CONTENT, "sha", None, settings=_S)
+    assert out["assessment"]["declared"] is None

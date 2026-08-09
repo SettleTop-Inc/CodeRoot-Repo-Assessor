@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from . import content as content_mod
 from . import coords, license as license_mod, probes, purpose, subject, versions
+from . import record as record_mod
 from .shapes import fact, unknown
 from .fingerprint import build_payload, compute_fingerprint
 from .registry import (TYPE_MODULES, TIER_CONF, REGISTRY_VERSION, FULL_TAXONOMY,
@@ -52,6 +53,11 @@ def build(repo_url: str, content: dict[str, str], commit_sha: str | None,
     if subdir:
         content = subject.filter_content_to_subdir(content, subdir)
         paths = subject.filter_paths_to_subdir(paths, subdir)
+    # `declared` reads `content` AFTER the subdir filter above, so a subdir subject
+    # reads its own re-rooted asset-record.json (record.py's parse_record docstring).
+    # Deliberately NOT threaded into build_payload/compute_fingerprint below — it is
+    # served-only, never hashed (spec §7 trust rule: nothing in record.py classifies).
+    declared = record_mod.declared_block(content)
     b = bucket_b or {}
     meta = {"description": b.get("description"),
             "topics": [t.lower() for t in (b.get("topics") or []) if isinstance(t, str)],
@@ -237,7 +243,7 @@ def build(repo_url: str, content: dict[str, str], commit_sha: str | None,
         "license": {"spdx": lic["spdx"], "caveat": lic["caveat"]},
         "coordinates": coordinates, "versions": versions.build(releases, commit_sha),
         "risk": risk_flags, "known_unknowns": known, "topics": topics,
-        "coverage_probes": coverage_probes,
+        "coverage_probes": coverage_probes, "declared": declared,
         # Audit trail for invariant-gated promotions (Task 7): which type was promoted,
         # from which probe state, on which LLM citation, at which confidence. Empty for
         # every repo that had no citation-backed candidate — i.e. almost all of them.
