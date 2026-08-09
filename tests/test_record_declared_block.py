@@ -41,8 +41,26 @@ def test_declared_block_served_when_record_present():
     content = {**MCP_FIXTURE_CONTENT, RECORD_BASENAME: json.dumps(GOOD)}
     out = assemble.build("https://github.com/o/n", content, "sha", None, settings=_S)
     assert out["assessment"]["declared"]["technologies"]["language"]["value"] == "python"
+    assert (out["assessment"]["declared"]["technologies"]["language"]["source"]
+            == "declared: asset-record.json")
 
 
 def test_declared_none_when_absent():
     out = assemble.build("https://github.com/o/n", MCP_FIXTURE_CONTENT, "sha", None, settings=_S)
     assert out["assessment"]["declared"] is None
+
+
+def test_declared_block_served_for_subdir_subject():
+    """A subdir subject's OWN asset-record.json — re-rooted by
+    `subject.filter_content_to_subdir` before `record.declared_block` ever reads
+    `content` (assemble.py's re-rooting-path comment) — still populates
+    `assessment["declared"]`, not just the whole-repo case above."""
+    subdir = "mypkg"
+    content = {
+        f"{subdir}/package.json": json.dumps({"dependencies": {"@modelcontextprotocol/sdk": "^1.0"}}),
+        f"{subdir}/src/index.ts": 'srv.registerTool("search", {});',
+        f"{subdir}/{RECORD_BASENAME}": json.dumps(GOOD),
+    }
+    out = assemble.build("https://github.com/o/n", content, "sha", None, settings=_S, subdir=subdir)
+    assert out["assessment"]["declared"] is not None
+    assert out["assessment"]["declared"]["technologies"]["language"]["value"] == "python"

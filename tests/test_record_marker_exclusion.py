@@ -27,6 +27,10 @@ def test_record_path_is_never_scanned():
     assert _skip_marker_scan(RECORD_BASENAME) is True
     assert _skip_marker_scan(f"pkg/{RECORD_BASENAME}") is True
     assert _skip_marker_scan("src/main.py") is False
+    # Near-miss basenames must NOT be swept in by a loose (substring/prefix) match —
+    # the exclusion is exact-basename only (Task 3 review).
+    assert _skip_marker_scan("asset-record.json.bak") is False
+    assert _skip_marker_scan("notasset-record.json") is False
 
 
 def test_scan_present_blobs_skips_the_record():
