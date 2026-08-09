@@ -10,6 +10,7 @@ from typing import Literal, Protocol, TypedDict, runtime_checkable
 from urllib.parse import urlsplit
 
 from ..assessment import content as content_mod
+from ..assessment import record
 from ..errors import RepoGone
 from ..vendored import _valid_slug
 
@@ -158,6 +159,18 @@ class DirectSource:
         # equivalent and keeps the on-disk cache path fixed per repo.
         repo_key = hashlib.sha256(f"{owner}/{name}".encode()).hexdigest()
         files, paths, capped, hits = self.fetcher.fetch(clone_url, repo_key, sha)
+        # declared_* keys land ONLY on this branch: `unchanged` fetches no
+        # files, so the record is unreadable there, and emitting None keys on
+        # that branch would look identical to "record removed" to CodeRoot's
+        # executor (which preserves prior DB values on `unchanged`) — see
+        # Task 5 brief for the full rationale.
+        rec = record.parse_record(files)
+        repo_meta = dict(repo_meta)
+        repo_meta.update({
+            "declared_created_by": rec["created_by"] if rec else None,
+            "declared_maintained_by": rec["maintained_by"] if rec else None,
+            "declared_created_at": rec["created_at"] if rec else None,
+        })
         return {"status": "acquired", "commit_sha": sha, "metadata": meta,
                 "repo_meta": repo_meta, "allowlist_version": alv,
                 "snapshot": {"commit_sha": sha, "metadata": meta,

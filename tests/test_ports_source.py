@@ -196,7 +196,12 @@ def test_noassertion_license_is_normalized_to_none():
 
 def test_acquire_result_carries_repo_meta_on_both_branches(monkeypatch):
     """`unchanged` (SHA reuse) must carry refreshed metadata too — spec §5.1:
-    Bucket B is refreshed on every run including the reuse path."""
+    Bucket B is refreshed on every run including the reuse path.
+
+    The acquired branch additionally carries the three declared_* keys (Task
+    5) that `unchanged` deliberately omits — see test_record_repo_meta.py for
+    the dedicated coverage of that asymmetry; this test only pins that the
+    baseline repo_meta columns keep showing up on both branches."""
     repo_obj = {
         "default_branch": "main", "description": "d", "homepage": "h",
         "topics": ["a"], "license": {"spdx_id": "MIT"},
@@ -211,7 +216,8 @@ def test_acquire_result_carries_repo_meta_on_both_branches(monkeypatch):
     src = _direct(http, _Fetcher(), monkeypatch)
     r = src.acquire("https://github.com/o/n", prior=None)
     assert r["status"] == "acquired"
-    assert set(r["repo_meta"]) == _EXPECTED_REPO_META_KEYS
+    assert set(r["repo_meta"]) == _EXPECTED_REPO_META_KEYS | {
+        "declared_created_by", "declared_maintained_by", "declared_created_at"}
     assert r["repo_meta"]["repo_owner_login"] == "o"
 
     # unchanged branch: matching prior short-circuits the clone, metadata
