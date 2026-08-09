@@ -11,6 +11,7 @@ import re
 from collections import Counter
 
 from ..vendored import _valid_slug
+from .record import RECORD_BASENAME, RECORD_MAX_BYTES
 
 _PHASE1 = ("README.md", "README.rst", "package.json", "pyproject.toml", "mcp.json",
            "server.json", "smithery.yaml", "smithery.json", "Dockerfile",
@@ -153,6 +154,14 @@ def dep_manifest_paths(paths) -> list[str]:
 # `_is_source` would never select them.
 _NEWTYPE_MANIFESTS = ("SKILL.md", "dataset_infos.json")
 _SKILL_MAX_FILES = 40
+
+# asset-record.json (spec 2026-08-09-authoring-mcp §7 channel 4): selected OUTSIDE
+# every shared budget — never counts toward total/mtotal/src_files, never sets
+# `capped` (which asserts SOURCE truncation), never displaces any other file.
+# Oversized bodies are skipped (the reader would reject them anyway); overflow
+# beyond the file cap is dropped silently — a repo with >20 subdir records is
+# adversarial, and the reader caps per-file size at RECORD_MAX_BYTES.
+_RECORD_MAX_FILES = 20
 
 # Tool-definition trees (e.g. a TS MCP server's src/tools/*.ts, spread across many
 # per-tool subdirectories) and package/module entrypoints (e.g. a monorepo package's
@@ -480,4 +489,11 @@ def select_source_paths(candidates: dict, *, skip=frozenset(), hits=()) -> tuple
         src_files += 1
         total += size
 
+    record_paths = sorted(
+        p for p in candidates
+        if p not in skip and p not in selected
+        and p.rsplit("/", 1)[-1] == RECORD_BASENAME
+        and not any(x in p.lower() for x in _SRC_EXCLUDE)
+        and _candidate_size(candidates, p) <= RECORD_MAX_BYTES)
+    selected.extend(record_paths[:_RECORD_MAX_FILES])
     return selected, capped
