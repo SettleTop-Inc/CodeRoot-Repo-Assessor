@@ -55,7 +55,7 @@ def test_matching_prior_performs_no_clone(monkeypatch):
     f = _Fetcher()
     src = _direct(_Http(sha="abc123"), f, monkeypatch)
     r = src.acquire("https://github.com/o/n",
-                    prior={"commit_sha": "abc123", "allowlist_version": 7})
+                    prior={"commit_sha": "abc123", "allowlist_version": 8})
     assert r["status"] == "unchanged"
     assert f.calls == 0
 
@@ -75,7 +75,7 @@ def test_unchanged_still_returns_refreshed_metadata(monkeypatch):
     http = _Http(sha="abc123", repo_obj={"description": "fresh", "topics": ["mcp"]})
     src = _direct(http, _Fetcher(), monkeypatch)
     r = src.acquire("https://github.com/o/n",
-                    prior={"commit_sha": "abc123", "allowlist_version": 7})
+                    prior={"commit_sha": "abc123", "allowlist_version": 8})
     assert r["status"] == "unchanged"
     assert r["metadata"]["description"] == "fresh"
 
@@ -218,7 +218,7 @@ def test_acquire_result_carries_repo_meta_on_both_branches(monkeypatch):
     # (including repo_meta) is still refreshed from resolve_head.
     src2 = _direct(http, _Fetcher(), monkeypatch)
     r2 = src2.acquire("https://github.com/o/n",
-                       prior={"commit_sha": "abc123", "allowlist_version": 7})
+                       prior={"commit_sha": "abc123", "allowlist_version": 8})
     assert r2["status"] == "unchanged"
     assert set(r2["repo_meta"]) == _EXPECTED_REPO_META_KEYS
     assert r2["repo_meta"]["repo_owner_login"] == "o"

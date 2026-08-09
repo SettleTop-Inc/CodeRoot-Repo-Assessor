@@ -165,8 +165,8 @@ def test_phase1_fetches_requirements_and_langgraph_json():
     assert "requirements.txt" in out["files"] and "langgraph.json" in out["files"]
 
 
-def test_allowlist_version_is_7():
-    assert ALLOWLIST_VERSION == 7   # 6->7: agent_run_shape v3 co-occurrence changes marker-driven selection
+def test_allowlist_version_is_8():
+    assert ALLOWLIST_VERSION == 8   # 7->8: asset-record.json budget-neutral selection (authoring MCP spec §6).
 
 
 def test_select_source_paths_selects_skill_md_bodies_independent_of_is_source():
@@ -256,11 +256,11 @@ def test_non_agent_hit_does_not_displace_a_tool_reservation():
     assert chosen.index("src/tools/a.ts") < chosen.index("cfg/settings.py")
 
 
-def test_hit_paths_that_are_not_candidates_are_ignored_and_allowlist_is_7():
+def test_hit_paths_that_are_not_candidates_are_ignored_and_allowlist_is_8():
     cands = {"lib/a.ts": 10}
     chosen, _ = select_source_paths(cands, hits=[{**_SHAPE, "path": "gone/x.py"}])
     assert chosen == ["lib/a.ts"]
-    assert ALLOWLIST_VERSION == 7
+    assert ALLOWLIST_VERSION == 8
 
 
 def test_agent_lift_is_capped_so_the_tool_reservation_always_survives():

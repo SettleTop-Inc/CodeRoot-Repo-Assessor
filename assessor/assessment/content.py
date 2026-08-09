@@ -116,11 +116,12 @@ _SRC_EXCLUDE = ("node_modules/", "dist/", "build/", "vendor/", "test/", "tests/"
 _SRC_MAX_FILES = 120            # was 60
 _SRC_MAX_BYTES = 1_600 * 1024   # was 800 * 1024
 
-ALLOWLIST_VERSION = 7   # bump on every allowlist widening; acquire stores it and
+ALLOWLIST_VERSION = 8   # bump on every allowlist widening; acquire stores it and
                         # SHA-reuse requires a match so stale snapshots refetch (§4.2)
                         # 4->5: dependency manifests in subdirs + non-Python/JS ecosystems.
                         # 5->6: marker-driven selection + raised source caps.
                         # 6->7: agent_run_shape v3 co-occurrence changes marker-driven selection.
+                        # 7->8: asset-record.json budget-neutral selection (authoring MCP spec §6).
 _AGENT_MANIFESTS = ("agents.yaml", "tasks.yaml", "langgraph.json", "agent.json", "agent-card.json")
 _MANIFEST_MAX_FILES, _MANIFEST_MAX_BYTES = 8, 64 * 1024
 
