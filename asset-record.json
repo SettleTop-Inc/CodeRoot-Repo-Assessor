@@ -1,0 +1,38 @@
+{
+  "technologies": {
+    "language": "python",
+    "framework": "mcp",
+    "runtime": "python>=3.12",
+    "dependencies": [
+      "fastapi",
+      "uvicorn",
+      "httpx",
+      "pydantic",
+      "pydantic-settings",
+      "mcp"
+    ]
+  },
+  "source_repo": {
+    "host": "github.com",
+    "owner": "SettleTop-Inc",
+    "name": "CodeRoot-Repo-Assessor"
+  },
+  "created_at": "2026-08-06T19:30:51Z",
+  "record_version": 1,
+  "created_by": "settletop-niles",
+  "maintained_by": "SettleTop-Inc",
+  "model_access": {
+    "mode": "byo",
+    "provider": null,
+    "model": null
+  },
+  "confirmation": {
+    "mode": "conversation",
+    "confirmed": [
+      "created_by",
+      "maintained_by",
+      "model_access.mode"
+    ],
+    "complete": true
+  }
+}
