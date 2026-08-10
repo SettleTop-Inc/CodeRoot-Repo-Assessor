@@ -113,7 +113,7 @@ def test_version_endpoint_reports_all_three_versions():
     assert set(r.json()) == {"registry_version", "allowlist_version",
                              "marker_vocab_version"}
     assert r.json()["registry_version"] == 10
-    assert r.json()["allowlist_version"] == 7
+    assert r.json()["allowlist_version"] == 8
 
 
 def test_healthz_needs_no_auth():
@@ -174,7 +174,7 @@ class _McpTools:
         return {"commit_sha": "abc123", "description": None, "homepage": None,
                 "topics": [], "license_spdx": None, "tree_paths": list(_MCP),
                 "content_paths": list(_MCP), "tree_capped": False, "marker_hits": [],
-                "source_coverage_capped": False, "allowlist_version": 7}
+                "source_coverage_capped": False, "allowlist_version": 8}
 
     def read_files(self, repo_id, commit_sha, paths):
         return {"files": dict(_MCP), "missing": []}

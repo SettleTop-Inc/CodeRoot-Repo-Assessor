@@ -52,12 +52,13 @@ def test_returns_the_seven_top_level_record_keys():
                       "llm_used", "assessment"}
 
 
-def test_assessment_payload_has_exactly_the_fifteen_keys():
+def test_assessment_payload_has_exactly_the_sixteen_keys():
     r = assess_handler(_Source(_MCP), NullCache(), _S, _SUBJECT)
     assert set(r["assessment"]) == {
         "classification", "purpose", "compositions", "composition", "license",
         "coordinates", "versions", "risk", "known_unknowns", "topics",
-        "coverage_probes", "promoted_types", "subdir", "asset_id", "source_url"}
+        "coverage_probes", "promoted_types", "subdir", "asset_id", "source_url",
+        "declared"}
 
 
 def test_interop_is_absent():

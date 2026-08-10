@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
 from . import content
 from . import markers
+from . import record
 from ..vendored import _REPO_KEY_RE, _SHA_RE
 
 _ALLOWED_HOSTS = frozenset({"github.com"})
@@ -175,12 +176,27 @@ def _read_blobs(git_dir: Path, shas: list[str], *, run_bytes: BytesRunner, timeo
 _MAX_MARKER_HITS = 500
 
 
+def _skip_marker_scan(path: str) -> bool:
+    """asset-record.json is excluded from marker scanning (spec §7 channel 2):
+    a record naming provider env vars or 'mcp server' must not generate
+    persisted marker_hits from its own text."""
+    return path.rsplit("/", 1)[-1] == record.RECORD_BASENAME
+
+
 def _scan_present_blobs(bodies: dict[str, str]) -> list[dict]:
     """Marker hits across already-read blob bodies, in path order. Pure over its argument:
-    the caller decides which blobs are present and affordable to read."""
+    the caller decides which blobs are present and affordable to read.
+
+    This is the SOLE production call site of `markers.scan_text` in this module — every
+    scan pass in `GitContentFetcher.fetch` (manifest pre-scan, source pre-scan, and the
+    final re-scan over the fully-selected `files`) routes through here, so the
+    `_skip_marker_scan` guard below covers all of them without needing a second guard
+    elsewhere."""
     hits: list[dict] = []
     for path in sorted(bodies):
         if not markers.is_scannable(path):
+            continue
+        if _skip_marker_scan(path):
             continue
         for h in markers.scan_text(path, bodies[path]):
             hits.append(h)
@@ -393,10 +409,10 @@ class GitContentFetcher:
         )
         entries: list[tuple[str, str, str]] = []
         capped = False
-        for record in out.split("\0"):
-            if not record:
+        for entry in out.split("\0"):
+            if not entry:
                 continue
-            meta, sep, path = record.partition("\t")
+            meta, sep, path = entry.partition("\t")
             if not sep:
                 continue
             mode, _type, blob_sha = meta.split(" ")

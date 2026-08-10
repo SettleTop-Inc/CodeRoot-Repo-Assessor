@@ -11,6 +11,7 @@ import re
 from collections import Counter
 
 from ..vendored import _valid_slug
+from .record import RECORD_BASENAME, RECORD_MAX_BYTES
 
 _PHASE1 = ("README.md", "README.rst", "package.json", "pyproject.toml", "mcp.json",
            "server.json", "smithery.yaml", "smithery.json", "Dockerfile",
@@ -115,11 +116,12 @@ _SRC_EXCLUDE = ("node_modules/", "dist/", "build/", "vendor/", "test/", "tests/"
 _SRC_MAX_FILES = 120            # was 60
 _SRC_MAX_BYTES = 1_600 * 1024   # was 800 * 1024
 
-ALLOWLIST_VERSION = 7   # bump on every allowlist widening; acquire stores it and
+ALLOWLIST_VERSION = 8   # bump on every allowlist widening; acquire stores it and
                         # SHA-reuse requires a match so stale snapshots refetch (§4.2)
                         # 4->5: dependency manifests in subdirs + non-Python/JS ecosystems.
                         # 5->6: marker-driven selection + raised source caps.
                         # 6->7: agent_run_shape v3 co-occurrence changes marker-driven selection.
+                        # 7->8: asset-record.json budget-neutral selection (authoring MCP spec §6).
 _AGENT_MANIFESTS = ("agents.yaml", "tasks.yaml", "langgraph.json", "agent.json", "agent-card.json")
 _MANIFEST_MAX_FILES, _MANIFEST_MAX_BYTES = 8, 64 * 1024
 
@@ -153,6 +155,16 @@ def dep_manifest_paths(paths) -> list[str]:
 # `_is_source` would never select them.
 _NEWTYPE_MANIFESTS = ("SKILL.md", "dataset_infos.json")
 _SKILL_MAX_FILES = 40
+
+# asset-record.json (spec 2026-08-09-authoring-mcp §7 channel 4): selected OUTSIDE
+# every shared budget — never counts toward total/mtotal/src_files, never sets
+# `capped` (which asserts SOURCE truncation), never displaces any other file.
+# Oversized bodies are skipped (the reader would reject them anyway); overflow
+# beyond the file cap is dropped silently — matches `_SKILL_MAX_FILES` (a legitimate
+# multi-asset monorepo can legitimately have >20 subdir records, so the cap isn't
+# about rejecting that case). The per-file RECORD_MAX_BYTES cap bounds the worst
+# case at 640KiB (40 * 16KiB) of budget-neutral reads.
+_RECORD_MAX_FILES = 40
 
 # Tool-definition trees (e.g. a TS MCP server's src/tools/*.ts, spread across many
 # per-tool subdirectories) and package/module entrypoints (e.g. a monorepo package's
@@ -319,6 +331,10 @@ def select_source_paths(candidates: dict, *, skip=frozenset(), hits=()) -> tuple
     `_AGENT_MANIFESTS`. Without the dedup a source-file entrypoint consumes a cap
     slot/byte budget and manifests double-count, dropping a different tail file than
     REST would.
+
+    A terminal pass then adds any asset-record.json candidates (`_RECORD_MAX_FILES`,
+    `RECORD_MAX_BYTES`) outside every budget above — see the comment at their
+    definitions for why that pass never counts toward SOURCE totals or `capped`.
     """
     blob_paths = [p for p in candidates if p not in skip and _is_source(p)]
 
@@ -480,4 +496,11 @@ def select_source_paths(candidates: dict, *, skip=frozenset(), hits=()) -> tuple
         src_files += 1
         total += size
 
+    record_paths = sorted(
+        p for p in candidates
+        if p.rsplit("/", 1)[-1] == RECORD_BASENAME
+        and p not in skip and p not in selected
+        and not any(x in p.lower() for x in _SRC_EXCLUDE)
+        and _candidate_size(candidates, p) <= RECORD_MAX_BYTES)
+    selected.extend(record_paths[:_RECORD_MAX_FILES])
     return selected, capped
