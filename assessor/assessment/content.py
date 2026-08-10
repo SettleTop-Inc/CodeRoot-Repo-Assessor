@@ -160,9 +160,11 @@ _SKILL_MAX_FILES = 40
 # every shared budget — never counts toward total/mtotal/src_files, never sets
 # `capped` (which asserts SOURCE truncation), never displaces any other file.
 # Oversized bodies are skipped (the reader would reject them anyway); overflow
-# beyond the file cap is dropped silently — a repo with >20 subdir records is
-# adversarial, and the reader caps per-file size at RECORD_MAX_BYTES.
-_RECORD_MAX_FILES = 20
+# beyond the file cap is dropped silently — matches `_SKILL_MAX_FILES` (a legitimate
+# multi-asset monorepo can legitimately have >20 subdir records, so the cap isn't
+# about rejecting that case). The per-file RECORD_MAX_BYTES cap bounds the worst
+# case at 640KiB (40 * 16KiB) of budget-neutral reads.
+_RECORD_MAX_FILES = 40
 
 # Tool-definition trees (e.g. a TS MCP server's src/tools/*.ts, spread across many
 # per-tool subdirectories) and package/module entrypoints (e.g. a monorepo package's
@@ -329,6 +331,10 @@ def select_source_paths(candidates: dict, *, skip=frozenset(), hits=()) -> tuple
     `_AGENT_MANIFESTS`. Without the dedup a source-file entrypoint consumes a cap
     slot/byte budget and manifests double-count, dropping a different tail file than
     REST would.
+
+    A terminal pass then adds any asset-record.json candidates (`_RECORD_MAX_FILES`,
+    `RECORD_MAX_BYTES`) outside every budget above — see the comment at their
+    definitions for why that pass never counts toward SOURCE totals or `capped`.
     """
     blob_paths = [p for p in candidates if p not in skip and _is_source(p)]
 
@@ -492,8 +498,8 @@ def select_source_paths(candidates: dict, *, skip=frozenset(), hits=()) -> tuple
 
     record_paths = sorted(
         p for p in candidates
-        if p not in skip and p not in selected
-        and p.rsplit("/", 1)[-1] == RECORD_BASENAME
+        if p.rsplit("/", 1)[-1] == RECORD_BASENAME
+        and p not in skip and p not in selected
         and not any(x in p.lower() for x in _SRC_EXCLUDE)
         and _candidate_size(candidates, p) <= RECORD_MAX_BYTES)
     selected.extend(record_paths[:_RECORD_MAX_FILES])

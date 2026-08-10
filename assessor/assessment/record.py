@@ -43,8 +43,12 @@ def _clean_technologies(v) -> dict | None:
     if not isinstance(v, dict):
         return None
     deps_in = v.get("dependencies")
-    deps = [d for d in deps_in if isinstance(d, str) and 0 < len(d) <= _MAX_DEP][:_MAX_DEPS] \
-        if isinstance(deps_in, list) else None
+    kept = [d for d in deps_in if isinstance(d, str) and 0 < len(d) <= _MAX_DEP] \
+        if isinstance(deps_in, list) else []
+    # A list that survives filtering to empty (every entry rejected, or the list was
+    # empty to start) collapses to None — never an affirmative empty [] that would
+    # read as a declared "zero dependencies" fact.
+    deps = (kept[:_MAX_DEPS] or None) if isinstance(deps_in, list) else None
     out = {"language": _clean_str(v.get("language")),
            "framework": _clean_str(v.get("framework")),
            "runtime": _clean_str(v.get("runtime")),

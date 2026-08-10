@@ -409,10 +409,10 @@ class GitContentFetcher:
         )
         entries: list[tuple[str, str, str]] = []
         capped = False
-        for record in out.split("\0"):
-            if not record:
+        for entry in out.split("\0"):
+            if not entry:
                 continue
-            meta, sep, path = record.partition("\t")
+            meta, sep, path = entry.partition("\t")
             if not sep:
                 continue
             mode, _type, blob_sha = meta.split(" ")

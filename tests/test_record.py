@@ -127,3 +127,30 @@ def test_record_version_true_rejected():
     # Boolean True == 1 in Python, but must not pass version gate
     bad = dict(GOOD, record_version=True)
     assert parse_record(_content(bad)) is None
+
+
+def test_all_dependencies_rejected_collapses_to_none():
+    # Every entry over _MAX_DEP (100 chars) is rejected field-by-field; the survivor
+    # list is empty, not []. An empty list must NOT read as an affirmative declared
+    # "zero dependencies" fact -- it must collapse to None like an absent field.
+    bad = dict(GOOD, technologies=dict(
+        GOOD["technologies"], dependencies=["d" * 300, "e" * 400]))
+    rec = parse_record(_content(bad))
+    assert rec["technologies"]["dependencies"] is None
+
+    block = declared_block(_content(bad))
+    # language/framework/runtime are still set, so the technologies block survives --
+    # but it must omit the dependencies key entirely, never assert an empty list.
+    assert "dependencies" not in block["technologies"]
+
+
+def test_all_dependencies_rejected_and_no_other_fields_omits_technologies():
+    # When dependencies is the ONLY populated technologies key and every entry is
+    # rejected, the whole technologies block must be absent from parse_record and
+    # declared_block -- not present with every value None.
+    bad = dict(GOOD, technologies={"dependencies": ["d" * 300, "e" * 400]})
+    rec = parse_record(_content(bad))
+    assert rec["technologies"] is None
+
+    block = declared_block(_content(bad))
+    assert block is None or "technologies" not in block

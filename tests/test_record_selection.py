@@ -31,11 +31,11 @@ def test_record_presence_changes_no_other_selection():
 
 def test_subdir_records_selected_up_to_cap():
     c = {"README.md": ("s0", 10)}
-    for i in range(25):
+    for i in range(45):
         c[f"pkg{i}/{RECORD_BASENAME}"] = (f"s{i}", 500)
     selected, capped = select_source_paths(c)
     picked = [p for p in selected if p.endswith(RECORD_BASENAME)]
-    assert len(picked) == 20                   # _RECORD_MAX_FILES
+    assert len(picked) == 40                   # _RECORD_MAX_FILES
     assert capped is False                     # record overflow NEVER claims source truncation
 
 
