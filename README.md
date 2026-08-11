@@ -17,7 +17,63 @@ fields on top of that — a business-domain guess, a citation-backed second look
 a borderline case — and every one of those is labelled as LLM-derived. Bring your
 own model, or run with none at all.
 
-## Quickstart
+## Install & run
+
+### Run with Docker (GHCR)
+
+Prebuilt images are published to the GitHub Container Registry. The package is
+**private**, so authenticate to GHCR once per machine before pulling — without
+it `docker pull`/`docker run` returns `403`:
+
+```bash
+# One-time: log in with a GitHub Personal Access Token (classic) that carries
+# the read:packages scope, supplied as the password.
+docker login ghcr.io -u <github-username>
+# (or: gh auth refresh -s read:packages && gh auth token | \
+#      docker login ghcr.io -u <github-username> --password-stdin)
+```
+
+Then pull and run the HTTP API — the mode the image runs by default
+(`uvicorn` on port 8081):
+
+```bash
+docker pull ghcr.io/settletop-inc/coderoot-repo-assessor:latest
+
+docker run --rm -p 8081:8081 \
+  -e ASSESSOR_API_TOKEN=changeme \
+  ghcr.io/settletop-inc/coderoot-repo-assessor:latest
+```
+
+Tags: `:latest` and `:sha-<short>` track `main`; release builds are tagged
+`:vX.Y.Z`. No `-v` mount is needed — acquisition clones the remote `repo_url`
+you pass it, not a local working directory. To run this same image as a **stdio
+MCP server** for Claude Code instead of the HTTP API, see
+[Use with Claude Code](#use-with-claude-code) below — it overrides the default
+command.
+
+The minimum you must set, and the optional knobs (full list under
+[Configuration](#configuration)):
+
+| Variable | Required? | Meaning |
+| --- | --- | --- |
+| `ASSESSOR_API_TOKEN` | one of these two | Bearer token required on every authenticated HTTP route. Startup fails closed without it. |
+| `ASSESSOR_ALLOW_ANONYMOUS` | one of these two | Set `true` to run with no token (deliberate opt-out). Startup fails closed unless this or `ASSESSOR_API_TOKEN` is set. |
+| `GITHUB_TOKENS` | no | Comma-separated PATs. Raises the GitHub REST rate limit (60 → 5000/hr) for repo-object and commit-SHA lookups; acquisition still works without it, anonymously. |
+| `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_MODEL` | no | Point at an OpenAI-compatible endpoint to enable advisory LLM-derived fields. Classification is fully deterministic with none set (`LLM_PROVIDER` defaults to `none`). |
+
+To add a model and raise the GitHub rate limit:
+
+```bash
+docker run --rm -p 8081:8081 \
+  -e ASSESSOR_API_TOKEN=changeme \
+  -e GITHUB_TOKENS=ghp_xxx,ghp_yyy \
+  -e LLM_PROVIDER=openai_compatible \
+  -e LLM_BASE_URL=http://host.docker.internal:11434/v1 \
+  -e LLM_MODEL=qwen2.5:7b \
+  ghcr.io/settletop-inc/coderoot-repo-assessor:latest
+```
+
+### Build from source
 
 ```bash
 docker build -t coderoot-repo-assessor:dev .
@@ -86,6 +142,54 @@ coderoot-repo-assessor-mcp
 
 Point any MCP client (Claude Desktop, an IDE plugin, etc.) at this command
 as a subprocess and it speaks MCP over that process's stdin/stdout.
+
+### Use with Claude Code
+
+The MCP surface speaks over **stdio**, so Claude Code launches the server as a
+subprocess. The default Docker command runs the *HTTP API*, so the registration
+overrides it with the stdio entrypoint (`coderoot-repo-assessor-mcp`) as the
+trailing argument. The `-i` (keep STDIN attached) is required for stdio MCP.
+
+**Docker (published image):**
+
+```bash
+claude mcp add coderoot-repo-assessor -- \
+  docker run --rm -i \
+    -e ASSESSOR_ALLOW_ANONYMOUS=true \
+    ghcr.io/settletop-inc/coderoot-repo-assessor:latest \
+    coderoot-repo-assessor-mcp
+```
+
+`ASSESSOR_ALLOW_ANONYMOUS=true` is here because startup fails closed without a
+token or this flag (see [config](#configuration)); over stdio there is no HTTP
+endpoint and no bearer check, so anonymous is the honest choice for a locally
+launched subprocess. Swap in `-e ASSESSOR_API_TOKEN=<token>` if you prefer.
+Add `-e GITHUB_TOKENS=ghp_xxx,ghp_yyy` to raise the GitHub rate limit, and the
+`LLM_*` vars to enable advisory model fields.
+
+**Local, no Docker (uv):**
+
+```bash
+claude mcp add coderoot-repo-assessor \
+  -e ASSESSOR_ALLOW_ANONYMOUS=true \
+  -- uv run --directory /path/to/CodeRoot-Repo-Assessor coderoot-repo-assessor-mcp
+```
+
+Once connected, these three tools appear in Claude Code:
+
+- `assess_repository(repo_url, subject_key="", subdir="")`
+- `acquire_repository(repo_url)`
+- `assessor_version()`
+
+**Confirm it's wired up** — the server should report `✓ Connected` and its
+tools should list:
+
+```bash
+claude mcp list
+# coderoot-repo-assessor: docker run --rm -i ... - ✓ Connected
+```
+
+Removal, if you want to start over, is `claude mcp remove coderoot-repo-assessor`.
 
 ## Configuration
 
