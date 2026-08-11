@@ -181,7 +181,14 @@ Once connected, these three tools appear in Claude Code:
 - `acquire_repository(repo_url)`
 - `assessor_version()`
 
-**Confirm it's wired up** — the server should report `✓ Connected` and its
+**Make it global, and reload.** `claude mcp add` defaults to **local** scope
+(available only in the directory you ran it in). Add `--scope user` to register
+it for every project. MCP servers connect at session start, so **restart Claude
+Code (or open a new chat)** after adding — a mid-session add won't show until then.
+
+**Confirm it's wired up** — run **`/mcp`** inside Claude Code (there is no MCP
+menu or button; `/mcp` lists each server, its status, and its tools), or
+`claude mcp list` in a terminal. The server should report `✓ Connected` and its
 tools should list:
 
 ```bash
